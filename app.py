@@ -76,6 +76,42 @@ def assign_category(row):
     return "미분류"
 
 # --------------------------------------------------
+# 엑셀 → 데이터프레임 변환 (카테고리/호수 보존)
+# --------------------------------------------------
+def process_uploaded_df(new_df):
+    required_cols = ["거래일시", "적요", "보낸분/받는분", "출금액", "입금액", "잔액", "송금메모", "년도"]
+    missing = [c for c in required_cols if c not in new_df.columns]
+    if missing:
+        raise ValueError(f"필수 컬럼이 없습니다: {missing}")
+
+    cols = required_cols.copy()
+    if "카테고리" in new_df.columns:
+        cols.append("카테고리")
+    if "호수" in new_df.columns:
+        cols.append("호수")
+
+    new_df = new_df[cols].copy()
+    new_df["거래일시"] = pd.to_datetime(new_df["거래일시"], errors="coerce")
+    new_df["출금액"] = pd.to_numeric(new_df["출금액"], errors="coerce").fillna(0)
+    new_df["입금액"] = pd.to_numeric(new_df["입금액"], errors="coerce").fillna(0)
+    new_df["잔액"] = pd.to_numeric(new_df["잔액"], errors="coerce")
+    new_df["년도"] = new_df["년도"].astype(str)
+
+    if "카테고리" not in new_df.columns:
+        new_df["카테고리"] = "미분류"
+    else:
+        new_df["카테고리"] = new_df["카테고리"].fillna("미분류").astype(str)
+
+    if "호수" not in new_df.columns:
+        new_df["호수"] = new_df["송금메모"].apply(extract_unit)
+    else:
+        mask_empty = new_df["호수"].isna() | (new_df["호수"].astype(str).str.strip() == "") | (new_df["호수"].astype(str) == "nan")
+        new_df.loc[mask_empty, "호수"] = new_df.loc[mask_empty, "송금메모"].apply(extract_unit)
+        new_df["호수"] = new_df["호수"].astype(str)
+
+    return new_df
+
+# --------------------------------------------------
 # PDF 생성
 # --------------------------------------------------
 def create_pdf(df, title="Transaction Report", unit="선택안함", party="선택안함", search=""):
@@ -172,48 +208,60 @@ with st.sidebar:
 
     st.info(f"현재 데이터: **{len(st.session_state.df)}건**")
 
+    # 1. 일반 엑셀 업로드
     st.subheader("1. 엑셀 업로드")
-    st.caption("새 파일만 올려도 기존 데이터와 자동으로 합쳐집니다.")
+    st.caption("새 거래내역을 추가할 때 사용 (기존 데이터와 합침)")
     uploaded_file = st.file_uploader(
         "거래내역 엑셀 업로드",
         type=["xlsx"],
+        key="upload_new",
         help="필수 컬럼: 거래일시, 적요, 보낸분/받는분, 출금액, 입금액, 잔액, 송금메모, 년도"
     )
 
     if uploaded_file is not None:
         try:
-            new_df = pd.read_excel(uploaded_file, engine="openpyxl")
-            required_cols = ["거래일시", "적요", "보낸분/받는분", "출금액", "입금액", "잔액", "송금메모", "년도"]
-            missing = [c for c in required_cols if c not in new_df.columns]
-            if missing:
-                st.error(f"필수 컬럼이 없습니다: {missing}")
-            else:
-                new_df = new_df[required_cols].copy()
-                new_df["거래일시"] = pd.to_datetime(new_df["거래일시"], errors="coerce")
-                new_df["출금액"] = pd.to_numeric(new_df["출금액"], errors="coerce").fillna(0)
-                new_df["입금액"] = pd.to_numeric(new_df["입금액"], errors="coerce").fillna(0)
-                new_df["잔액"] = pd.to_numeric(new_df["잔액"], errors="coerce")
-                new_df["년도"] = new_df["년도"].astype(str)
-                if "카테고리" not in new_df.columns:
-                    new_df["카테고리"] = new_df.apply(assign_category, axis=1)
-                new_df["호수"] = new_df["송금메모"].apply(extract_unit)
+            raw = pd.read_excel(uploaded_file, engine="openpyxl")
+            new_df = process_uploaded_df(raw)
 
-                if not st.session_state.df.empty:
-                    before_count = len(st.session_state.df)
-                    combined = pd.concat([st.session_state.df, new_df], ignore_index=True)
-                    combined = combined.drop_duplicates(
-                        subset=["거래일시", "적요", "보낸분/받는분", "출금액", "입금액"],
-                        keep="last"
-                    )
-                    st.session_state.df = combined
-                    added = len(st.session_state.df) - before_count
-                    st.success(f"업로드 완료! 새로 추가: {added}건 / 전체: {len(st.session_state.df)}건")
-                else:
-                    st.session_state.df = new_df
-                    st.success(f"업로드 완료! 총 {len(st.session_state.df)}건")
-                save_data(st.session_state.df)
+            if not st.session_state.df.empty:
+                before_count = len(st.session_state.df)
+                combined = pd.concat([st.session_state.df, new_df], ignore_index=True)
+                combined = combined.drop_duplicates(
+                    subset=["거래일시", "적요", "보낸분/받는분", "출금액", "입금액"],
+                    keep="last"
+                )
+                st.session_state.df = combined
+                added = len(st.session_state.df) - before_count
+                st.success(f"업로드 완료! 새로 추가: {added}건 / 전체: {len(st.session_state.df)}건")
+            else:
+                st.session_state.df = new_df
+                st.success(f"업로드 완료! 총 {len(st.session_state.df)}건")
+            save_data(st.session_state.df)
         except Exception as e:
             st.error(f"파일 읽기 오류: {e}")
+
+    st.divider()
+
+    # 수정데이터 업로드
+    st.subheader("🔄 수정데이터 업로드")
+    st.caption("이전에 받은 수정데이터 백업 파일을 올리면 카테고리·호수 수정 내용이 그대로 반영됩니다.")
+    restore_file = st.file_uploader(
+        "수정데이터 업로드",
+        type=["xlsx"],
+        key="upload_restore",
+        help="수정데이터_백업_YYYYMMDD.xlsx 파일을 선택하세요"
+    )
+
+    if restore_file is not None:
+        try:
+            raw = pd.read_excel(restore_file, engine="openpyxl")
+            restored_df = process_uploaded_df(raw)
+            st.session_state.df = restored_df
+            save_data(st.session_state.df)
+            st.success(f"업로드 완료! 총 {len(st.session_state.df)}건 (카테고리·호수 유지됨)")
+            st.rerun()
+        except Exception as e:
+            st.error(f"업로드 오류: {e}")
 
     st.divider()
 
@@ -284,7 +332,7 @@ with st.sidebar:
 st.title("(주)로프트프라퍼티스 입출금 관리")
 
 if st.session_state.df.empty:
-    st.info("왼쪽 사이드바에서 엑셀 파일을 업로드하거나 수동으로 거래를 추가해주세요.")
+    st.info("왼쪽 사이드바에서 엑셀 파일을 업로드하거나, 수정데이터 업로드로 백업 파일을 올려주세요.")
     st.stop()
 
 # 사이드바 필터 적용
@@ -502,7 +550,6 @@ st.divider()
 # --------------------------------------------------
 st.subheader("📋 거래 내역")
 
-# 안내 문구
 st.success("""
 **✏️ 수정 방법 안내**  
 • **카테고리** → 더블클릭 후 목록에서 선택하면 입출금 항목을 지정할 수 있습니다.  
@@ -511,14 +558,12 @@ st.success("""
 수정한 내용은 자동 저장되며, 엑셀 백업에도 포함됩니다.
 """)
 
-# 거래내역 전용 기간 필터
 col_t1, col_t2 = st.columns(2)
 with col_t1:
     tx_start = st.date_input("거래내역 시작일", value=None, key="tx_start")
 with col_t2:
     tx_end = st.date_input("거래내역 종료일", value=None, key="tx_end")
 
-# 기간 필터 적용
 tx_filtered = filtered.copy()
 if tx_start is not None:
     tx_filtered = tx_filtered[tx_filtered["거래일시"] >= pd.Timestamp(tx_start)]
@@ -564,7 +609,7 @@ if not edited_df.equals(display_df):
     st.success("수정 내용이 저장되었습니다. (카테고리 / 호수 / 송금메모)")
     st.rerun()
 
-# ★ 하단 버튼 (엑셀다운로드 + 수정데이터 엑셀백업)
+# 하단 버튼
 st.markdown("---")
 col_btn1, col_btn2 = st.columns(2)
 
@@ -586,15 +631,16 @@ with col_btn1:
 
 with col_btn2:
     if not st.session_state.df.empty:
+        st.warning("⚠️ 카테고리·호수·송금메모를 수정한 뒤에는 반드시 아래 버튼을 누르세요.")
         full_buffer = io.BytesIO()
         with pd.ExcelWriter(full_buffer, engine="openpyxl") as writer:
             st.session_state.df.to_excel(writer, index=False, sheet_name="전체데이터")
         full_buffer.seek(0)
         st.download_button(
-            label="💾 수정데이터 엑셀백업",
+            label="💾 수정데이터 엑셀백업 (수정 후 반드시 누르세요)",
             data=full_buffer,
             file_name=f"수정데이터_백업_{datetime.now().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-st.caption("※ Streamlit Cloud에서는 앱이 재시작되면 데이터가 초기질 수 있습니다. 중요한 데이터는 '수정데이터 엑셀백업'으로 저장해 두세요.")
+st.caption("※ 프로그램을 다시 열 때는 사이드바의 「수정데이터 업로드」에 백업 파일을 올리면 수정 내용이 그대로 유지됩니다.")
