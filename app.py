@@ -7,23 +7,19 @@ import os
 import pickle
 import io
 
-# 페이지 설정
 st.set_page_config(
     page_title="(주)로프트프라퍼티스 입출금 관리",
     page_icon="🏢",
     layout="wide"
 )
 
-# 데이터 저장 경로
 DATA_DIR = "data"
 DATA_FILE = os.path.join(DATA_DIR, "transactions.pkl")
 
-# 카테고리
 INCOME_CATEGORIES = ["임대수입", "관리비수입", "보증금", "기타수입"]
 EXPENSE_CATEGORIES = ["인건비", "세금", "관리용역비", "공과금", "수선유지비", "금융비용", "기타지출"]
 ALL_CATEGORIES = INCOME_CATEGORIES + EXPENSE_CATEGORIES
 
-# 고정 호수 목록
 FIXED_UNITS = [
     "100호", "101호", "102호", "103호", "104호",
     "201호", "202호", "203호", "204호", "205호", "206호", "207호", "208호",
@@ -32,9 +28,6 @@ FIXED_UNITS = [
     "601호", "602호", "603호", "604호", "605호", "606호", "607호", "608호"
 ]
 
-# --------------------------------------------------
-# 데이터 저장/불러오기
-# --------------------------------------------------
 def save_data(df):
     try:
         os.makedirs(DATA_DIR, exist_ok=True)
@@ -54,9 +47,6 @@ def load_data():
         "거래일시", "적요", "보낸분/받는분", "출금액", "입금액", "잔액", "송금메모", "년도", "카테고리", "호수"
     ])
 
-# --------------------------------------------------
-# 호수 추출
-# --------------------------------------------------
 def extract_unit(memo):
     if pd.isna(memo) or str(memo).strip() == "":
         return "미지정"
@@ -75,9 +65,6 @@ def extract_unit(memo):
 def assign_category(row):
     return "미분류"
 
-# --------------------------------------------------
-# 엑셀 → 데이터프레임 변환 (카테고리/호수 보존)
-# --------------------------------------------------
 def process_uploaded_df(new_df):
     required_cols = ["거래일시", "적요", "보낸분/받는분", "출금액", "입금액", "잔액", "송금메모", "년도"]
     missing = [c for c in required_cols if c not in new_df.columns]
@@ -111,9 +98,6 @@ def process_uploaded_df(new_df):
 
     return new_df
 
-# --------------------------------------------------
-# PDF 생성
-# --------------------------------------------------
 def create_pdf(df, title="Transaction Report", unit="선택안함", party="선택안함", search=""):
     pdf = FPDF()
     pdf.add_page()
@@ -193,9 +177,6 @@ def create_pdf(df, title="Transaction Report", unit="선택안함", party="선�
     else:
         return output.encode("latin-1")
 
-# --------------------------------------------------
-# 세션 초기화
-# --------------------------------------------------
 if "df" not in st.session_state:
     st.session_state.df = load_data()
 
@@ -205,10 +186,8 @@ if "df" not in st.session_state:
 with st.sidebar:
     st.title("🏢 로프트프라퍼티스")
     st.caption("임대사업 입출금 관리")
-
     st.info(f"현재 데이터: **{len(st.session_state.df)}건**")
 
-    # 1. 일반 엑셀 업로드
     st.subheader("1. 엑셀 업로드")
     st.caption("새 거래내역을 추가할 때 사용 (기존 데이터와 합침)")
     uploaded_file = st.file_uploader(
@@ -222,7 +201,6 @@ with st.sidebar:
         try:
             raw = pd.read_excel(uploaded_file, engine="openpyxl")
             new_df = process_uploaded_df(raw)
-
             if not st.session_state.df.empty:
                 before_count = len(st.session_state.df)
                 combined = pd.concat([st.session_state.df, new_df], ignore_index=True)
@@ -242,7 +220,6 @@ with st.sidebar:
 
     st.divider()
 
-    # 수정데이터 업로드 (백업 복원용)
     st.subheader("🔄 수정데이터 업로드")
     st.caption("이전에 받은 수정데이터 백업 파일을 올리면 카테고리·호수 수정 내용이 그대로 반영됩니다.")
     restore_file = st.file_uploader(
@@ -262,20 +239,6 @@ with st.sidebar:
             st.rerun()
         except Exception as e:
             st.error(f"업로드 오류: {e}")
-
-    st.divider()
-
-    st.subheader("2. 필터")
-    df = st.session_state.df.copy()
-    units = sorted([u for u in df["호수"].dropna().unique().tolist() if u != "미지정"]) if not df.empty else []
-    units = ["미지정"] + units if "미지정" in df["호수"].values else units
-    selected_unit = st.selectbox("호수", ["전체"] + units)
-    years = sorted(df["년도"].dropna().unique().tolist(), reverse=True) if not df.empty else []
-    selected_year = st.selectbox("연도", ["전체"] + years)
-    months = list(range(1, 13))
-    selected_month = st.selectbox("월", ["전체"] + months)
-    type_filter = st.radio("구분", ["전체", "입금", "출금"], horizontal=True)
-    search_term = st.text_input("검색어 (보낸분/받는분, 적요, 송금메모)")
 
     st.divider()
 
@@ -327,7 +290,7 @@ with st.sidebar:
                 st.rerun()
 
 # --------------------------------------------------
-# 메인 영역
+# 메인
 # --------------------------------------------------
 st.title("(주)로프트프라퍼티스 입출금 관리")
 
@@ -335,46 +298,23 @@ if st.session_state.df.empty:
     st.info("왼쪽 사이드바에서 엑셀 파일을 업로드하거나, 수정데이터 업로드로 백업 파일을 올려주세요.")
     st.stop()
 
-# 사이드바 필터 적용
-filtered = st.session_state.df.copy()
-if selected_unit != "전체":
-    filtered = filtered[filtered["호수"] == selected_unit]
-if selected_year != "전체":
-    filtered = filtered[filtered["년도"] == selected_year]
-if selected_month != "전체":
-    filtered = filtered[filtered["거래일시"].dt.month == selected_month]
-if type_filter == "입금":
-    filtered = filtered[filtered["입금액"] > 0]
-elif type_filter == "출금":
-    filtered = filtered[filtered["출금액"] > 0]
-if search_term:
-    mask = (
-        filtered["보낸분/받는분"].astype(str).str.contains(search_term, case=False, na=False) |
-        filtered["적요"].astype(str).str.contains(search_term, case=False, na=False) |
-        filtered["송금메모"].astype(str).str.contains(search_term, case=False, na=False)
-    )
-    filtered = filtered[mask]
-
-# --------------------------------------------------
-# 1. 대시보드
-# --------------------------------------------------
-st.subheader("📊 대시보드")
 today = date.today()
-this_month = filtered[
-    (filtered["거래일시"].dt.year == today.year) &
-    (filtered["거래일시"].dt.month == today.month)
+this_month_all = st.session_state.df[
+    (st.session_state.df["거래일시"].dt.year == today.year) &
+    (st.session_state.df["거래일시"].dt.month == today.month)
 ]
-income_this_month = this_month["입금액"].sum()
-expense_this_month = this_month["출금액"].sum()
+income_this_month = this_month_all["입금액"].sum()
+expense_this_month = this_month_all["출금액"].sum()
 net_this_month = income_this_month - expense_this_month
 
+st.subheader("📊 대시보드")
 col1, col2, col3 = st.columns(3)
 col1.metric("이번 달 입금", f"{income_this_month:,.0f} 원")
 col2.metric("이번 달 출금", f"{expense_this_month:,.0f} 원")
 col3.metric("이번 달 순현금흐름", f"{net_this_month:,.0f} 원")
 
 # --------------------------------------------------
-# 2. 통합 상세 조회
+# 통합 상세 조회
 # --------------------------------------------------
 st.markdown("#### 🔍 통합 상세 조회 (호수 + 상대방 + 검색어 + 기간)")
 st.info("호수, 보낸분/받는분, 검색어, 기간을 모두 합쳐서 해당하는 내역을 전부 보여줍니다. (합집합)")
@@ -521,7 +461,7 @@ else:
     st.warning("조건에 맞는 거래 내역이 없습니다.")
 
 # --------------------------------------------------
-# 3. 연도별 요약
+# 연도별 요약
 # --------------------------------------------------
 st.markdown("#### 연도별 요약")
 yearly = st.session_state.df.groupby("년도").agg(입금합계=("입금액", "sum"), 출금합계=("출금액", "sum")).reset_index()
@@ -530,7 +470,7 @@ yearly = yearly.sort_values("년도", ascending=False)
 st.dataframe(yearly.style.format({"입금합계": "{:,.0f}", "출금합계": "{:,.0f}", "순현금흐름": "{:,.0f}"}), use_container_width=True, hide_index=True)
 
 # --------------------------------------------------
-# 4. 최근 6개월 순현금흐름
+# 최근 6개월
 # --------------------------------------------------
 st.markdown("#### 최근 6개월 월별 순현금흐름")
 df_temp = st.session_state.df.copy()
@@ -546,24 +486,62 @@ else:
 st.divider()
 
 # --------------------------------------------------
-# 5. 거래 내역
+# 거래 내역
 # --------------------------------------------------
 st.subheader("📋 거래 내역")
 
 st.success("""
 **✏️ 수정 방법 안내**  
-• **카테고리** → 더블클릭 후 목록에서 선택하면 입출금 항목을 지정할 수 있습니다.  
-• **송금메모** → 클릭 후 직접 입력/수정할 수 있습니다.  
-• **호수** → 클릭 후 목록에서 선택하면 변경됩니다.  
+• **카테고리** → 더블클릭 후 목록에서 선택  
+• **송금메모** → 클릭 후 직접 입력/수정  
+• **호수** → 클릭 후 목록에서 선택  
 """)
 
+# 필터 (거래기간 바로 위)
+st.markdown("##### 필터")
+df_all = st.session_state.df.copy()
+units = sorted([u for u in df_all["호수"].dropna().unique().tolist() if u != "미지정"]) if not df_all.empty else []
+units = ["미지정"] + units if "미지정" in df_all["호수"].values else units
+years = sorted(df_all["년도"].dropna().unique().tolist(), reverse=True) if not df_all.empty else []
+
+f1, f2, f3, f4 = st.columns(4)
+with f1:
+    selected_unit = st.selectbox("호수", ["전체"] + units, key="tx_unit")
+with f2:
+    selected_year = st.selectbox("연도", ["전체"] + years, key="tx_year")
+with f3:
+    selected_month = st.selectbox("월", ["전체"] + list(range(1, 13)), key="tx_month")
+with f4:
+    type_filter = st.radio("구분", ["전체", "입금", "출금"], horizontal=True, key="tx_type")
+
+search_term = st.text_input("검색어 (보낸분/받는분, 적요, 송금메모)", key="tx_search")
+
+st.markdown("##### 거래기간")
 col_t1, col_t2 = st.columns(2)
 with col_t1:
-    tx_start = st.date_input("거래내역 시작일", value=None, key="tx_start")
+    tx_start = st.date_input("시작일", value=None, key="tx_start")
 with col_t2:
-    tx_end = st.date_input("거래내역 종료일", value=None, key="tx_end")
+    tx_end = st.date_input("종료일", value=None, key="tx_end")
 
-tx_filtered = filtered.copy()
+# 필터 적용
+tx_filtered = st.session_state.df.copy()
+if selected_unit != "전체":
+    tx_filtered = tx_filtered[tx_filtered["호수"] == selected_unit]
+if selected_year != "전체":
+    tx_filtered = tx_filtered[tx_filtered["년도"] == selected_year]
+if selected_month != "전체":
+    tx_filtered = tx_filtered[tx_filtered["거래일시"].dt.month == selected_month]
+if type_filter == "입금":
+    tx_filtered = tx_filtered[tx_filtered["입금액"] > 0]
+elif type_filter == "출금":
+    tx_filtered = tx_filtered[tx_filtered["출금액"] > 0]
+if search_term:
+    mask = (
+        tx_filtered["보낸분/받는분"].astype(str).str.contains(search_term, case=False, na=False) |
+        tx_filtered["적요"].astype(str).str.contains(search_term, case=False, na=False) |
+        tx_filtered["송금메모"].astype(str).str.contains(search_term, case=False, na=False)
+    )
+    tx_filtered = tx_filtered[mask]
 if tx_start is not None:
     tx_filtered = tx_filtered[tx_filtered["거래일시"] >= pd.Timestamp(tx_start)]
 if tx_end is not None:
@@ -608,9 +586,8 @@ if not edited_df.equals(display_df):
     st.success("수정 내용이 반영되었습니다. 하단 「수정내용 저장」 버튼을 한 번 더 눌러 주세요.")
     st.rerun()
 
-# ★ 하단 버튼 영역
+# 하단 버튼
 st.markdown("---")
-
 st.warning("⚠️ 카테고리·호수·송금메모를 수정한 뒤에는 반드시 아래 버튼을 누르세요.")
 
 col_btn1, col_btn2, col_btn3 = st.columns(3)
@@ -631,7 +608,7 @@ with col_btn2:
             export_tx.to_excel(writer, index=False, sheet_name="거래내역")
         tx_buffer.seek(0)
         st.download_button(
-            label="📊 엑셀다운로드",
+            label="📊 엑셀다운로드(현재 필터된 거래내역)",
             data=tx_buffer,
             file_name=f"거래내역_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -645,11 +622,11 @@ with col_btn3:
             st.session_state.df.to_excel(writer, index=False, sheet_name="전체데이터")
         full_buffer.seek(0)
         st.download_button(
-            label="📁 수정데이터 엑셀백업",
+            label="📁 수정데이터 엑셀백업(전체데이터)",
             data=full_buffer,
             file_name=f"수정데이터_백업_{datetime.now().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
 
-st.caption("※ 「수정내용 저장」을 누르면 바로 반영됩니다. 클라우드에서 앱이 재시작된 경우에만 사이드바 「수정데이터 업로드」로 백업 파일을 올리면 됩니다.")
+st.caption("※ 「엑셀다운로드(현재 필터된 거래내역)」= 지금 화면만 / 「수정데이터 엑셀백업(전체데이터)」= 전체 복원용")
