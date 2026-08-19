@@ -242,7 +242,7 @@ with st.sidebar:
 
     st.divider()
 
-    # 수정데이터 업로드
+    # 수정데이터 업로드 (백업 복원용)
     st.subheader("🔄 수정데이터 업로드")
     st.caption("이전에 받은 수정데이터 백업 파일을 올리면 카테고리·호수 수정 내용이 그대로 반영됩니다.")
     restore_file = st.file_uploader(
@@ -555,7 +555,6 @@ st.success("""
 • **카테고리** → 더블클릭 후 목록에서 선택하면 입출금 항목을 지정할 수 있습니다.  
 • **송금메모** → 클릭 후 직접 입력/수정할 수 있습니다.  
 • **호수** → 클릭 후 목록에서 선택하면 변경됩니다.  
-수정한 내용은 자동 저장되며, 엑셀 백업에도 포함됩니다.
 """)
 
 col_t1, col_t2 = st.columns(2)
@@ -606,14 +605,23 @@ if not edited_df.equals(display_df):
         st.session_state.df.loc[mask, "호수"] = row["호수"]
         st.session_state.df.loc[mask, "송금메모"] = row["송금메모"]
     save_data(st.session_state.df)
-    st.success("수정 내용이 저장되었습니다. (카테고리 / 호수 / 송금메모)")
+    st.success("수정 내용이 반영되었습니다. 하단 「수정내용 저장」 버튼을 한 번 더 눌러 주세요.")
     st.rerun()
 
-# 하단 버튼
+# ★ 하단 버튼 영역
 st.markdown("---")
-col_btn1, col_btn2 = st.columns(2)
+
+st.warning("⚠️ 카테고리·호수·송금메모를 수정한 뒤에는 반드시 아래 버튼을 누르세요.")
+
+col_btn1, col_btn2, col_btn3 = st.columns(3)
 
 with col_btn1:
+    if st.button("💾 수정내용 저장", type="primary", use_container_width=True):
+        save_data(st.session_state.df)
+        st.success("수정 내용이 저장되었습니다. 프로그램을 다시 켜도 유지됩니다.")
+        st.rerun()
+
+with col_btn2:
     if not tx_filtered.empty:
         tx_buffer = io.BytesIO()
         with pd.ExcelWriter(tx_buffer, engine="openpyxl") as writer:
@@ -626,21 +634,22 @@ with col_btn1:
             label="📊 엑셀다운로드",
             data=tx_buffer,
             file_name=f"거래내역_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
         )
 
-with col_btn2:
+with col_btn3:
     if not st.session_state.df.empty:
-        st.warning("⚠️ 카테고리·호수·송금메모를 수정한 뒤에는 반드시 아래 버튼을 누르세요.")
         full_buffer = io.BytesIO()
         with pd.ExcelWriter(full_buffer, engine="openpyxl") as writer:
             st.session_state.df.to_excel(writer, index=False, sheet_name="전체데이터")
         full_buffer.seek(0)
         st.download_button(
-            label="💾 수정데이터 엑셀백업 (수정 후 반드시 누르세요)",
+            label="📁 수정데이터 엑셀백업",
             data=full_buffer,
             file_name=f"수정데이터_백업_{datetime.now().strftime('%Y%m%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
         )
 
-st.caption("※ 프로그램을 다시 열 때는 사이드바의 「수정데이터 업로드」에 백업 파일을 올리면 수정 내용이 그대로 유지됩니다.")
+st.caption("※ 「수정내용 저장」을 누르면 바로 반영됩니다. 클라우드에서 앱이 재시작된 경우에만 사이드바 「수정데이터 업로드」로 백업 파일을 올리면 됩니다.")
