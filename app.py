@@ -84,72 +84,81 @@ def assign_category(row):
     return "미분류"
 
 # --------------------------------------------------
-# PDF 생성 함수
+# PDF 생성 함수 (클라우드 호환)
 # --------------------------------------------------
-def create_pdf(df, title="입출금 내역", unit="선택안함", party="선택안함", search=""):
+def create_pdf(df, title="Transaction Report", unit="선택안함", party="선택안함", search=""):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
 
+    use_korean = False
+    font_name = "Helvetica"
+
+    # 한글 폰트 시도 (로컬 Windows)
     try:
-        # 로컬 Windows
         pdf.add_font("Malgun", "", r"C:\Windows\Fonts\malgun.ttf", uni=True)
         pdf.add_font("Malgun", "B", r"C:\Windows\Fonts\malgunbd.ttf", uni=True)
         font_name = "Malgun"
         use_korean = True
     except:
-        font_name = "Helvetica"
         use_korean = False
+        font_name = "Helvetica"
 
+    def safe_text(text):
+        """한글 폰트가 없을 때 한글을 제거"""
+        if use_korean:
+            return str(text) if text is not None else ""
+        text = str(text) if text is not None else ""
+        return re.sub(r'[^\x00-\x7F]+', '', text).strip() or "-"
+
+    # 제목
     pdf.set_font(font_name, "B" if use_korean else "", 16)
-    pdf.cell(0, 12, title, ln=True, align="C")
+    pdf.cell(0, 12, safe_text(title), ln=True, align="C")
     pdf.ln(2)
 
+    # 요약 정보
     pdf.set_font(font_name, size=10)
-    pdf.cell(0, 7, f"생성일시: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True)
-    
-    condition_text = "검색 조건: "
+    pdf.cell(0, 7, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True)
+
     conditions = []
     if unit != "선택안함":
-        conditions.append(f"호수={unit}")
+        conditions.append(f"Unit={safe_text(unit)}")
     if party != "선택안함":
-        conditions.append(f"상대방={party}")
+        conditions.append(f"Party={safe_text(party)}")
     if search:
-        conditions.append(f"검색어={search}")
-    
-    if conditions:
-        condition_text += " / ".join(conditions)
-    else:
-        condition_text += "없음"
-    
+        conditions.append(f"Search={safe_text(search)}")
+
+    condition_text = "Filter: " + (" / ".join(conditions) if conditions else "None")
     pdf.cell(0, 7, condition_text, ln=True)
-    pdf.cell(0, 7, f"총 건수: {len(df)}건", ln=True)
+    pdf.cell(0, 7, f"Total Records: {len(df)}", ln=True)
 
     income = df["입금액"].sum()
     expense = df["출금액"].sum()
     net = income - expense
-    pdf.cell(0, 7, f"입금 합계: {income:,.0f} 원", ln=True)
-    pdf.cell(0, 7, f"출금 합계: {expense:,.0f} 원", ln=True)
-    pdf.cell(0, 7, f"순현금흐름: {net:,.0f} 원", ln=True)
+    pdf.cell(0, 7, f"Income: {income:,.0f} KRW", ln=True)
+    pdf.cell(0, 7, f"Expense: {expense:,.0f} KRW", ln=True)
+    pdf.cell(0, 7, f"Net: {net:,.0f} KRW", ln=True)
     pdf.ln(5)
 
+    # 테이블 헤더
     pdf.set_font(font_name, "B" if use_korean else "", 8)
     col_widths = [26, 18, 28, 34, 22, 22, 35]
-    headers = ["날짜", "호수", "상대방", "적요", "출금", "입금", "메모"]
+    headers = ["Date", "Unit", "Party", "Desc", "Out", "In", "Memo"]
 
     for i, h in enumerate(headers):
         pdf.cell(col_widths[i], 8, h, border=1, align="C")
     pdf.ln()
 
+    # 테이블 데이터
     pdf.set_font(font_name, size=7)
     for _, row in df.iterrows():
         date_str = row["거래일시"].strftime("%Y-%m-%d") if pd.notna(row["거래일시"]) else "-"
-        unit_val = str(row["호수"])[:8]
-        party_val = str(row["보낸분/받는분"])[:11]
-        desc = str(row["적요"])[:13]
+        unit_val = safe_text(row["호수"])[:8]
+        party_val = safe_text(row["보낸분/받는분"])[:11]
+        desc = safe_text(row["적요"])[:13]
         out_amt = f"{row['출금액']:,.0f}" if row["출금액"] > 0 else ""
         in_amt = f"{row['입금액']:,.0f}" if row["입금액"] > 0 else ""
-        memo = str(row["송금메모"])[:13]
+        memo = safe_text(row["송금메모"])[:13]
 
         pdf.cell(col_widths[0], 7, date_str, border=1)
         pdf.cell(col_widths[1], 7, unit_val, border=1)
@@ -231,11 +240,10 @@ with st.sidebar:
 
     st.divider()
 
-    # 전체 데이터 백업 / 복원
+    # 전체 데이터 백업
     st.subheader("데이터 백업 / 복원")
     
     if not st.session_state.df.empty:
-        # 전체 데이터 엑셀 다운로드
         full_buffer = io.BytesIO()
         with pd.ExcelWriter(full_buffer, engine="openpyxl") as writer:
             st.session_state.df.to_excel(writer, index=False, sheet_name="전체데이터")
