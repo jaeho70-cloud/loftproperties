@@ -94,7 +94,6 @@ def create_pdf(df, title="Transaction Report", unit="선택안함", party="선�
     use_korean = False
     font_name = "Helvetica"
 
-    # 한글 폰트 시도 (로컬 Windows)
     try:
         pdf.add_font("Malgun", "", r"C:\Windows\Fonts\malgun.ttf", uni=True)
         pdf.add_font("Malgun", "B", r"C:\Windows\Fonts\malgunbd.ttf", uni=True)
@@ -105,18 +104,15 @@ def create_pdf(df, title="Transaction Report", unit="선택안함", party="선�
         font_name = "Helvetica"
 
     def safe_text(text):
-        """한글 폰트가 없을 때 한글을 제거"""
         if use_korean:
             return str(text) if text is not None else ""
         text = str(text) if text is not None else ""
         return re.sub(r'[^\x00-\x7F]+', '', text).strip() or "-"
 
-    # 제목
     pdf.set_font(font_name, "B" if use_korean else "", 16)
     pdf.cell(0, 12, safe_text(title), ln=True, align="C")
     pdf.ln(2)
 
-    # 요약 정보
     pdf.set_font(font_name, size=10)
     pdf.cell(0, 7, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True)
 
@@ -140,7 +136,6 @@ def create_pdf(df, title="Transaction Report", unit="선택안함", party="선�
     pdf.cell(0, 7, f"Net: {net:,.0f} KRW", ln=True)
     pdf.ln(5)
 
-    # 테이블 헤더
     pdf.set_font(font_name, "B" if use_korean else "", 8)
     col_widths = [26, 18, 28, 34, 22, 22, 35]
     headers = ["Date", "Unit", "Party", "Desc", "Out", "In", "Memo"]
@@ -149,7 +144,6 @@ def create_pdf(df, title="Transaction Report", unit="선택안함", party="선�
         pdf.cell(col_widths[i], 8, h, border=1, align="C")
     pdf.ln()
 
-    # 테이블 데이터
     pdf.set_font(font_name, size=7)
     for _, row in df.iterrows():
         date_str = row["거래일시"].strftime("%Y-%m-%d") if pd.notna(row["거래일시"]) else "-"
@@ -399,9 +393,9 @@ col3.metric("이번 달 순현금흐름", f"{net_this_month:,.0f} 원")
 # --------------------------------------------------
 # 2. 통합 상세 조회
 # --------------------------------------------------
-st.markdown("#### 🔍 통합 상세 조회 (호수 + 상대방 + 검색어)")
+st.markdown("#### 🔍 통합 상세 조회 (호수 + 상대방 + 검색어 + 기간)")
 
-st.info("호수, 보낸분/받는분, 추가 검색어를 모두 합쳐서 해당하는 내역을 전부 보여줍니다. (합집합)")
+st.info("호수, 보낸분/받는분, 검색어, 기간을 모두 합쳐서 해당하는 내역을 전부 보여줍니다. (합집합)")
 
 all_parties = sorted(st.session_state.df["보낸분/받는분"].dropna().unique().tolist()) if not st.session_state.df.empty else []
 
@@ -411,9 +405,16 @@ with col_a:
 with col_b:
     combo_party = st.selectbox("보낸분/받는분 선택", ["선택안함"] + all_parties, key="combo_party")
 
+# 검색 기간
+col_d1, col_d2 = st.columns(2)
+with col_d1:
+    start_date = st.date_input("시작일", value=None, key="combo_start")
+with col_d2:
+    end_date = st.date_input("종료일", value=None, key="combo_end")
+
 combo_search = st.text_input(
     "추가 검색어 (여러 개 가능, 공백 또는 / 로 구분)",
-    placeholder="예: 월세 보증금   또는   이혜빈/606호",
+    placeholder="예: 계약금 또는 보증금 또는 이혜빈/606호 또는 1,750,000원 등",
     key="combo_search"
 )
 
@@ -424,15 +425,26 @@ if combo_unit != "선택안함":
     masks.append(base_df["호수"] == combo_unit)
 if combo_party != "선택안함":
     masks.append(base_df["보낸분/받는분"] == combo_party)
+
+# 기간 필터
+if start_date is not None:
+    masks.append(base_df["거래일시"] >= pd.Timestamp(start_date))
+if end_date is not None:
+    masks.append(base_df["거래일시"] <= pd.Timestamp(end_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1))
+
 if combo_search:
     keywords = re.split(r'[\s/]+', combo_search.strip())
     keywords = [k for k in keywords if k]
     for kw in keywords:
+        kw_clean = kw.replace(",", "").replace("원", "").strip()
+        
         kw_mask = (
             base_df["호수"].astype(str).str.contains(kw, case=False, na=False) |
             base_df["보낸분/받는분"].astype(str).str.contains(kw, case=False, na=False) |
             base_df["적요"].astype(str).str.contains(kw, case=False, na=False) |
-            base_df["송금메모"].astype(str).str.contains(kw, case=False, na=False)
+            base_df["송금메모"].astype(str).str.contains(kw, case=False, na=False) |
+            base_df["출금액"].astype(str).str.contains(kw_clean, case=False, na=False) |
+            base_df["입금액"].astype(str).str.contains(kw_clean, case=False, na=False)
         )
         masks.append(kw_mask)
 
@@ -528,11 +540,13 @@ if not combo_df.empty:
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
                 condition_df = pd.DataFrame({
-                    "항목": ["호수", "상대방", "검색어", "조회건수", "입금합계", "출금합계", "순현금흐름"],
+                    "항목": ["호수", "상대방", "검색어", "시작일", "종료일", "조회건수", "입금합계", "출금합계", "순현금흐름"],
                     "내용": [
                         combo_unit,
                         combo_party,
                         combo_search if combo_search else "-",
+                        str(start_date) if start_date else "-",
+                        str(end_date) if end_date else "-",
                         len(combo_df),
                         f"{c_income:,.0f}",
                         f"{c_expense:,.0f}",
@@ -558,63 +572,13 @@ if not combo_df.empty:
         except Exception as e:
             st.warning(f"엑셀 생성 중 오류: {e}")
 
-elif combo_unit == "선택안함" and combo_party == "선택안함" and not combo_search:
-    st.caption("호수나 상대방을 선택하거나 검색어를 입력하면 결과가 표시됩니다.")
+elif combo_unit == "선택안함" and combo_party == "선택안함" and not combo_search and start_date is None and end_date is None:
+    st.caption("호수나 상대방을 선택하거나 검색어/기간을 입력하면 결과가 표시됩니다.")
 else:
     st.warning("조건에 맞는 거래 내역이 없습니다.")
 
 # --------------------------------------------------
-# 3. 호수별 요약
-# --------------------------------------------------
-st.markdown("#### 호수별 요약 (현재 필터 기준)")
-
-if not filtered.empty:
-    unit_summary = filtered.groupby("호수").agg(
-        입금합계=("입금액", "sum"),
-        출금합계=("출금액", "sum"),
-        건수=("적요", "count")
-    ).reset_index()
-    unit_summary["순현금흐름"] = unit_summary["입금합계"] - unit_summary["출금합계"]
-    unit_summary = unit_summary.sort_values("호수")
-    
-    st.dataframe(
-        unit_summary.style.format({
-            "입금합계": "{:,.0f}",
-            "출금합계": "{:,.0f}",
-            "순현금흐름": "{:,.0f}"
-        }),
-        use_container_width=True,
-        hide_index=True
-    )
-else:
-    st.info("표시할 데이터가 없습니다.")
-
-# --------------------------------------------------
-# 4. 보낸분/받는분별 요약
-# --------------------------------------------------
-st.markdown("#### 보낸분/받는분별 요약 (현재 필터 기준)")
-
-if not filtered.empty:
-    party_summary = filtered.groupby("보낸분/받는분").agg(
-        입금합계=("입금액", "sum"),
-        출금합계=("출금액", "sum"),
-        건수=("적요", "count")
-    ).reset_index()
-    party_summary["순현금흐름"] = party_summary["입금합계"] - party_summary["출금합계"]
-    party_summary = party_summary.sort_values("보낸분/받는분")
-    
-    st.dataframe(
-        party_summary.style.format({
-            "입금합계": "{:,.0f}",
-            "출금합계": "{:,.0f}",
-            "순현금흐름": "{:,.0f}"
-        }),
-        use_container_width=True,
-        hide_index=True
-    )
-
-# --------------------------------------------------
-# 5. 연도별 요약
+# 3. 연도별 요약
 # --------------------------------------------------
 st.markdown("#### 연도별 요약")
 yearly = st.session_state.df.groupby("년도").agg(
@@ -634,7 +598,7 @@ st.dataframe(
 )
 
 # --------------------------------------------------
-# 6. 최근 6개월 순현금흐름
+# 4. 최근 6개월 순현금흐름
 # --------------------------------------------------
 st.markdown("#### 최근 6개월 월별 순현금흐름")
 df_temp = st.session_state.df.copy()
@@ -654,11 +618,11 @@ else:
 st.divider()
 
 # --------------------------------------------------
-# 7. 거래 내역
+# 5. 거래 내역
 # --------------------------------------------------
 st.subheader(f"📋 거래 내역 ({len(filtered)}건)")
 
-st.info("💡 호수가 '미지정'인 건은 아래에서 직접 수정할 수 있습니다.")
+st.info("💡 호수가 '미지정'인 건은 아래에서 직접 수정할 수 있습니다. 수정한 카테고리는 전체 데이터 백업에 포함됩니다.")
 
 display_df = filtered[[
     "거래일시", "호수", "적요", "보낸분/받는분", "출금액", "입금액", "잔액", "송금메모", "년도", "카테고리"
