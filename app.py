@@ -527,22 +527,6 @@ if tx_end is not None:
 
 st.caption(f"현재 표시 건수: **{len(tx_filtered)}건**")
 
-# 현재 거래내역 엑셀 다운로드 (테이블 위)
-if not tx_filtered.empty:
-    tx_buffer = io.BytesIO()
-    with pd.ExcelWriter(tx_buffer, engine="openpyxl") as writer:
-        export_tx = tx_filtered[[
-            "거래일시", "호수", "보낸분/받는분", "적요", "출금액", "입금액", "잔액", "송금메모", "년도", "카테고리"
-        ]].sort_values("거래일시", ascending=False)
-        export_tx.to_excel(writer, index=False, sheet_name="거래내역")
-    tx_buffer.seek(0)
-    st.download_button(
-        label="📊 현재 거래내역 엑셀 다운로드",
-        data=tx_buffer,
-        file_name=f"거래내역_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
 display_df = tx_filtered[[
     "거래일시", "호수", "적요", "보낸분/받는분", "출금액", "입금액", "잔액", "송금메모", "년도", "카테고리"
 ]].copy().sort_values("거래일시", ascending=False)
@@ -580,18 +564,37 @@ if not edited_df.equals(display_df):
     st.success("수정 내용이 저장되었습니다. (카테고리 / 호수 / 송금메모)")
     st.rerun()
 
-# ★ 수정데이터 엑셀백업 버튼 (테이블 아래)
+# ★ 하단 버튼 (엑셀다운로드 + 수정데이터 엑셀백업)
 st.markdown("---")
-if not st.session_state.df.empty:
-    full_buffer = io.BytesIO()
-    with pd.ExcelWriter(full_buffer, engine="openpyxl") as writer:
-        st.session_state.df.to_excel(writer, index=False, sheet_name="전체데이터")
-    full_buffer.seek(0)
-    st.download_button(
-        label="💾 수정데이터 엑셀백업",
-        data=full_buffer,
-        file_name=f"수정데이터_백업_{datetime.now().strftime('%Y%m%d')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+col_btn1, col_btn2 = st.columns(2)
+
+with col_btn1:
+    if not tx_filtered.empty:
+        tx_buffer = io.BytesIO()
+        with pd.ExcelWriter(tx_buffer, engine="openpyxl") as writer:
+            export_tx = tx_filtered[[
+                "거래일시", "호수", "보낸분/받는분", "적요", "출금액", "입금액", "잔액", "송금메모", "년도", "카테고리"
+            ]].sort_values("거래일시", ascending=False)
+            export_tx.to_excel(writer, index=False, sheet_name="거래내역")
+        tx_buffer.seek(0)
+        st.download_button(
+            label="📊 엑셀다운로드",
+            data=tx_buffer,
+            file_name=f"거래내역_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+with col_btn2:
+    if not st.session_state.df.empty:
+        full_buffer = io.BytesIO()
+        with pd.ExcelWriter(full_buffer, engine="openpyxl") as writer:
+            st.session_state.df.to_excel(writer, index=False, sheet_name="전체데이터")
+        full_buffer.seek(0)
+        st.download_button(
+            label="💾 수정데이터 엑셀백업",
+            data=full_buffer,
+            file_name=f"수정데이터_백업_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
 st.caption("※ Streamlit Cloud에서는 앱이 재시작되면 데이터가 초기질 수 있습니다. 중요한 데이터는 '수정데이터 엑셀백업'으로 저장해 두세요.")
