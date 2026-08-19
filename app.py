@@ -14,8 +14,8 @@ st.set_page_config(
     layout="wide"
 )
 
-# 데이터 저장 경로
-DATA_DIR = r"C:\loftproperties\data"
+# 데이터 저장 경로 (상대 경로 - 로컬/클라우드 공통)
+DATA_DIR = "data"
 DATA_FILE = os.path.join(DATA_DIR, "transactions.pkl")
 
 # 기본 카테고리 목록
@@ -36,9 +36,12 @@ FIXED_UNITS = [
 # 데이터 저장/불러오기 함수
 # --------------------------------------------------
 def save_data(df):
-    os.makedirs(DATA_DIR, exist_ok=True)
-    with open(DATA_FILE, "wb") as f:
-        pickle.dump(df, f)
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(DATA_FILE, "wb") as f:
+            pickle.dump(df, f)
+    except Exception as e:
+        st.warning(f"데이터 저장 실패 (클라우드 환경일 수 있음): {e}")
 
 def load_data():
     if os.path.exists(DATA_FILE):
@@ -81,7 +84,7 @@ def assign_category(row):
     return "미분류"
 
 # --------------------------------------------------
-# PDF 생성 함수 (한글 지원 + 검색 조건 표시)
+# PDF 생성 함수
 # --------------------------------------------------
 def create_pdf(df, title="입출금 내역", unit="선택안함", party="선택안함", search=""):
     pdf = FPDF()
@@ -89,6 +92,7 @@ def create_pdf(df, title="입출금 내역", unit="선택안함", party="선택�
     pdf.set_auto_page_break(auto=True, margin=15)
 
     try:
+        # 로컬 Windows
         pdf.add_font("Malgun", "", r"C:\Windows\Fonts\malgun.ttf", uni=True)
         pdf.add_font("Malgun", "B", r"C:\Windows\Fonts\malgunbd.ttf", uni=True)
         font_name = "Malgun"
@@ -175,12 +179,12 @@ with st.sidebar:
     st.title("🏢 로프트프라퍼티스")
     st.caption("임대사업 입출금 관리")
 
-    st.info(f"현재 저장된 데이터: **{len(st.session_state.df)}건**")
+    st.info(f"현재 데이터: **{len(st.session_state.df)}건**")
 
     st.subheader("1. 엑셀 업로드")
     st.caption("새 파일만 올려도 기존 데이터와 자동으로 합쳐집니다.")
     uploaded_file = st.file_uploader(
-        "전체거래내역.xlsx 또는 업데이트 파일 업로드",
+        "거래내역 엑셀 업로드",
         type=["xlsx"],
         help="필수 컬럼: 거래일시, 적요, 보낸분/받는분, 출금액, 입금액, 잔액, 송금메모, 년도"
     )
@@ -215,7 +219,7 @@ with st.sidebar:
                     )
                     st.session_state.df = combined
                     added = len(st.session_state.df) - before_count
-                    st.success(f"업로드 완료! 새로 추가된 건수: {added}건 / 전체: {len(st.session_state.df)}건")
+                    st.success(f"업로드 완료! 새로 추가: {added}건 / 전체: {len(st.session_state.df)}건")
                 else:
                     st.session_state.df = new_df
                     st.success(f"업로드 완료! 총 {len(st.session_state.df)}건")
@@ -227,12 +231,32 @@ with st.sidebar:
 
     st.divider()
 
-    if st.button("⚠️ 저장된 데이터 모두 삭제", type="secondary"):
+    # 전체 데이터 백업 / 복원
+    st.subheader("데이터 백업 / 복원")
+    
+    if not st.session_state.df.empty:
+        # 전체 데이터 엑셀 다운로드
+        full_buffer = io.BytesIO()
+        with pd.ExcelWriter(full_buffer, engine="openpyxl") as writer:
+            st.session_state.df.to_excel(writer, index=False, sheet_name="전체데이터")
+        full_buffer.seek(0)
+        
+        st.download_button(
+            label="💾 전체 데이터 엑셀 백업",
+            data=full_buffer,
+            file_name=f"전체데이터_백업_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    if st.button("⚠️ 데이터 모두 삭제", type="secondary"):
         st.session_state.df = pd.DataFrame(columns=[
             "거래일시", "적요", "보낸분/받는분", "출금액", "입금액", "잔액", "송금메모", "년도", "카테고리", "호수"
         ])
         if os.path.exists(DATA_FILE):
-            os.remove(DATA_FILE)
+            try:
+                os.remove(DATA_FILE)
+            except:
+                pass
         st.success("데이터가 초기화되었습니다.")
         st.rerun()
 
@@ -423,7 +447,7 @@ if not combo_df.empty:
     c3.metric("출금 합계", f"{c_expense:,.0f} 원")
     c4.metric("순현금흐름", f"{c_net:,.0f} 원")
 
-    st.markdown("**조회 결과** (행을 클릭해서 선택하세요. Ctrl 또는 Shift로 여러 개 선택 가능)")
+    st.markdown("**조회 결과** (행을 클릭해서 선택하세요)")
 
     combo_df_display = combo_df[[
         "거래일시", "호수", "보낸분/받는분", "적요", "출금액", "입금액", "송금메모", "카테고리"
@@ -495,7 +519,6 @@ if not combo_df.empty:
         try:
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
-                # 검색 조건 시트
                 condition_df = pd.DataFrame({
                     "항목": ["호수", "상대방", "검색어", "조회건수", "입금합계", "출금합계", "순현금흐름"],
                     "내용": [
@@ -510,7 +533,6 @@ if not combo_df.empty:
                 })
                 condition_df.to_excel(writer, index=False, sheet_name="검색조건")
 
-                # 조회 결과 시트
                 export_df = combo_df[[
                     "거래일시", "호수", "보낸분/받는분", "적요", "출금액", "입금액", "송금메모", "카테고리", "년도"
                 ]].copy()
@@ -675,4 +697,4 @@ if not edited_df.equals(display_df):
     st.success("호수/카테고리가 업데이트되었습니다.")
     st.rerun()
 
-st.caption("데이터는 C:\\loftproperties\\data\\transactions.pkl 파일에 자동 저장됩니다. 프로그램을 다시 실행해도 이전 데이터가 유지됩니다.")
+st.caption("※ Streamlit Cloud에서는 앱이 재시작되면 데이터가 초기질 수 있습니다. 중요한 데이터는 '전체 데이터 엑셀 백업'으로 저장해 두세요.")
