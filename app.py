@@ -591,53 +591,8 @@ if tx_end is not None:
 
 st.caption(f"현재 표시 건수: **{len(tx_filtered):,}건**")
 
-display_df = tx_filtered[COLUMNS].copy()
-if not display_df.empty:
-    display_df = display_df.sort_values("거래일시", ascending=False)
-
-if display_df.empty:
-    st.info("필터 조건에 맞는 거래 내역이 없습니다. 필터를 조정해 보세요.")
-else:
-    edited_df = st.data_editor(
-        display_df,
-        column_config={
-            "거래일시": st.column_config.DatetimeColumn("거래일시", format="YYYY-MM-DD"),
-            "호수": st.column_config.SelectboxColumn("호수", options=["미지정"] + FIXED_UNITS, required=True),
-            "출금액": st.column_config.NumberColumn("출금액", format="%,d"),
-            "입금액": st.column_config.NumberColumn("입금액", format="%,d"),
-            "잔액": st.column_config.NumberColumn("잔액", format="%,d"),
-            "송금메모": st.column_config.TextColumn("송금메모"),
-            "카테고리": st.column_config.SelectboxColumn(
-                "카테고리", options=ALL_CATEGORIES + ["미분류"], required=True
-            ),
-        },
-        use_container_width=True,
-        hide_index=True,
-        num_rows="fixed",
-        key="transaction_editor",
-    )
-    try:
-        if not edited_df.equals(display_df):
-            for _, row in edited_df.iterrows():
-                mask = (
-                    (st.session_state.df["거래일시"] == row["거래일시"]) &
-                    (st.session_state.df["적요"] == row["적요"]) &
-                    (st.session_state.df["보낸분/받는분"] == row["보낸분/받는분"]) &
-                    (st.session_state.df["출금액"] == row["출금액"]) &
-                    (st.session_state.df["입금액"] == row["입금액"])
-                )
-                st.session_state.df.loc[mask, "카테고리"] = row["카테고리"]
-                st.session_state.df.loc[mask, "호수"] = row["호수"]
-                st.session_state.df.loc[mask, "송금메모"] = row["송금메모"]
-            st.success("화면 반영됨 → 아래 「수정내용 저장」을 누르세요.")
-            st.rerun()
-    except Exception:
-        pass
-
-# 하단 버튼 — 항상 표시
-st.markdown("---")
-st.warning("⚠️ 카테고리·호수·송금메모를 수정한 뒤에는 반드시 아래 버튼을 누르세요.")
-
+# ★ 저장/다운로드 버튼 — 테이블 바로 위 (항상 보임)
+st.warning("⚠️ 카테고리·호수·송금메모를 수정한 뒤에는 반드시 저장 버튼을 누르세요.")
 b1, b2, b3 = st.columns(3)
 
 with b1:
@@ -679,5 +634,51 @@ with b3:
         )
     else:
         st.caption("백업할 데이터가 없습니다.")
+
+st.markdown("---")
+
+# 테이블
+display_df = tx_filtered[COLUMNS].copy()
+if not display_df.empty:
+    display_df = display_df.sort_values("거래일시", ascending=False)
+
+if display_df.empty:
+    st.info("필터 조건에 맞는 거래 내역이 없습니다. 필터를 조정해 보세요.")
+else:
+    edited_df = st.data_editor(
+        display_df,
+        column_config={
+            "거래일시": st.column_config.DatetimeColumn("거래일시", format="YYYY-MM-DD"),
+            "호수": st.column_config.SelectboxColumn("호수", options=["미지정"] + FIXED_UNITS, required=True),
+            "출금액": st.column_config.NumberColumn("출금액", format="%,d"),
+            "입금액": st.column_config.NumberColumn("입금액", format="%,d"),
+            "잔액": st.column_config.NumberColumn("잔액", format="%,d"),
+            "송금메모": st.column_config.TextColumn("송금메모"),
+            "카테고리": st.column_config.SelectboxColumn(
+                "카테고리", options=ALL_CATEGORIES + ["미분류"], required=True
+            ),
+        },
+        use_container_width=True,
+        hide_index=True,
+        num_rows="fixed",
+        key="transaction_editor",
+    )
+    try:
+        if not edited_df.equals(display_df):
+            for _, row in edited_df.iterrows():
+                mask = (
+                    (st.session_state.df["거래일시"] == row["거래일시"]) &
+                    (st.session_state.df["적요"] == row["적요"]) &
+                    (st.session_state.df["보낸분/받는분"] == row["보낸분/받는분"]) &
+                    (st.session_state.df["출금액"] == row["출금액"]) &
+                    (st.session_state.df["입금액"] == row["입금액"])
+                )
+                st.session_state.df.loc[mask, "카테고리"] = row["카테고리"]
+                st.session_state.df.loc[mask, "호수"] = row["호수"]
+                st.session_state.df.loc[mask, "송금메모"] = row["송금메모"]
+            st.success("화면 반영됨 → 위 「수정내용 저장」을 누르세요.")
+            st.rerun()
+    except Exception:
+        pass
 
 st.caption("※ 저장=Google시트 / 엑셀다운로드=현재필터 / 수정데이터백업=전체")
