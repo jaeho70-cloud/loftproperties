@@ -32,81 +32,64 @@ FIXED_UNITS = [
 COLUMNS = ["거래일시", "적요", "보낸분/받는분", "출금액", "입금액", "잔액", "송금메모", "년도", "카테고리", "호수"]
 
 # --------------------------------------------------
-# Google 시트
+# Google 시트 (호출 최소화)
 # --------------------------------------------------
+@st.cache_resource(show_spinner=False)
 def get_gspread_client():
-    try:
-        import gspread
-        from google.oauth2.service_account import Credentials
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
-        info = dict(st.secrets["gcp_service_account"])
-        creds = Credentials.from_service_account_info(info, scopes=scopes)
-        return gspread.authorize(creds)
-    except Exception:
-        return None
+    """서비스 계정 클라이언트 — 프로세스당 1회 생성"""
+    import gspread
+    from google.oauth2.service_account import Credentials
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    info = dict(st.secrets["gcp_service_account"])
+    creds = Credentials.from_service_account_info(info, scopes=scopes)
+    return gspread.authorize(creds)
 
 def get_worksheet():
+    client = get_gspread_client()
+    spreadsheet_id = st.secrets["sheets"]["spreadsheet_id"]
+    sh = client.open_by_key(spreadsheet_id)
     try:
-        client = get_gspread_client()
-        if client is None:
-            return None
-        spreadsheet_id = st.secrets["sheets"]["spreadsheet_id"]
-        sh = client.open_by_key(spreadsheet_id)
-        try:
-            ws = sh.worksheet(SHEET_NAME)
-        except Exception:
-            ws = sh.add_worksheet(title=SHEET_NAME, rows=3000, cols=20)
-            ws.append_row(COLUMNS)
-        return ws
-    except Exception as e:
-        st.warning(f"Google 시트 연결 실패: {e}")
-        return None
+        ws = sh.worksheet(SHEET_NAME)
+    except Exception:
+        ws = sh.add_worksheet(title=SHEET_NAME, rows=3000, cols=20)
+        ws.append_row(COLUMNS)
+    return ws, sh.title
 
 def load_from_sheets():
-    ws = get_worksheet()
-    if ws is None:
-        return None
-    try:
-        records = ws.get_all_records()
-        if not records:
-            return pd.DataFrame(columns=COLUMNS)
-        df = pd.DataFrame(records)
-        for c in COLUMNS:
-            if c not in df.columns:
-                df[c] = None
-        df = df[COLUMNS]
-        df["거래일시"] = pd.to_datetime(df["거래일시"], errors="coerce")
-        df["출금액"] = pd.to_numeric(df["출금액"], errors="coerce").fillna(0)
-        df["입금액"] = pd.to_numeric(df["입금액"], errors="coerce").fillna(0)
-        df["잔액"] = pd.to_numeric(df["잔액"], errors="coerce")
-        df["년도"] = df["년도"].astype(str)
-        df["카테고리"] = df["카테고리"].fillna("미분류").astype(str)
-        df["호수"] = df["호수"].fillna("미지정").astype(str)
-        return df
-    except Exception as e:
-        st.warning(f"시트 불러오기 실패: {e}")
-        return None
+    """시트에서 전체 데이터 1회 로드"""
+    ws, title = get_worksheet()
+    records = ws.get_all_records()
+    if not records:
+        return pd.DataFrame(columns=COLUMNS), title
+    df = pd.DataFrame(records)
+    for c in COLUMNS:
+        if c not in df.columns:
+            df[c] = None
+    df = df[COLUMNS]
+    df["거래일시"] = pd.to_datetime(df["거래일시"], errors="coerce")
+    df["출금액"] = pd.to_numeric(df["출금액"], errors="coerce").fillna(0)
+    df["입금액"] = pd.to_numeric(df["입금액"], errors="coerce").fillna(0)
+    df["잔액"] = pd.to_numeric(df["잔액"], errors="coerce")
+    df["년도"] = df["년도"].astype(str)
+    df["카테고리"] = df["카테고리"].fillna("미분류").astype(str)
+    df["호수"] = df["호수"].fillna("미지정").astype(str)
+    return df, title
 
 def save_to_sheets(df):
-    ws = get_worksheet()
-    if ws is None:
-        return False
-    try:
-        export = df.copy()
-        export["거래일시"] = export["거래일시"].apply(
-            lambda x: x.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(x) else ""
-        )
-        export = export.fillna("")
-        values = [COLUMNS] + export[COLUMNS].astype(str).values.tolist()
-        ws.clear()
-        ws.update("A1", values)
-        return True
-    except Exception as e:
-        st.warning(f"시트 저장 실패: {e}")
-        return False
+    """저장 버튼 시에만 호출"""
+    ws, _ = get_worksheet()
+    export = df.copy()
+    export["거래일시"] = export["거래일시"].apply(
+        lambda x: x.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(x) else ""
+    )
+    export = export.fillna("")
+    values = [COLUMNS] + export[COLUMNS].astype(str).values.tolist()
+    ws.clear()
+    ws.update("A1", values, value_input_option="USER_ENTERED")
+    return True
 
 def save_data_local(df):
     try:
@@ -126,15 +109,22 @@ def load_data_local():
     return pd.DataFrame(columns=COLUMNS)
 
 def save_data(df):
-    ok = save_to_sheets(df)
+    """명시적 저장: 시트 쓰기 + 로컬 백업"""
+    ok = False
+    try:
+        ok = save_to_sheets(df)
+    except Exception as e:
+        st.warning(f"시트 저장 실패: {e}")
     save_data_local(df)
     return ok
 
-def load_data():
-    df = load_from_sheets()
-    if df is not None:
-        return df
-    return load_data_local()
+def initial_load():
+    """세션 시작 시 1회만 시트 읽기. 실패 시 로컬."""
+    try:
+        df, title = load_from_sheets()
+        return df, True, title, None
+    except Exception as e:
+        return load_data_local(), False, None, str(e)
 
 # --------------------------------------------------
 # 공통
@@ -215,7 +205,6 @@ def fmt_num(n):
         return ""
 
 def multi_keyword_filter(df, search_text):
-    """복수 검색어 OR 필터. 호수/상대방/적요/메모/카테고리/금액 대상"""
     if df is None or df.empty or not search_text or not str(search_text).strip():
         return df
     keywords = [k for k in re.split(r'[\s/]+', str(search_text).strip()) if k]
@@ -306,10 +295,19 @@ def create_pdf(df, title="Transaction Report", unit="선택안함", party="선�
     return bytes(output) if isinstance(output, (bytes, bytearray)) else output.encode("latin-1")
 
 # --------------------------------------------------
-# 세션
+# 세션 — 시트 읽기는 여기서 1회만
 # --------------------------------------------------
 if "df" not in st.session_state:
-    st.session_state.df = load_data()
+    df0, sheets_ok, sheet_title, err = initial_load()
+    st.session_state.df = df0
+    st.session_state.sheets_ok = sheets_ok
+    st.session_state.sheet_title = sheet_title
+    st.session_state.sheets_err = err
+
+if "sheets_ok" not in st.session_state:
+    st.session_state.sheets_ok = False
+    st.session_state.sheet_title = None
+    st.session_state.sheets_err = None
 
 # --------------------------------------------------
 # 사이드바
@@ -319,20 +317,21 @@ with st.sidebar:
     st.caption("임대사업 입출금 관리")
     st.info(f"현재 데이터: **{len(st.session_state.df)}건**")
 
-    try:
-        import gspread
-        from google.oauth2.service_account import Credentials
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive",
-        ]
-        info = dict(st.secrets["gcp_service_account"])
-        creds = Credentials.from_service_account_info(info, scopes=scopes)
-        client = gspread.authorize(creds)
-        sh = client.open_by_key(st.secrets["sheets"]["spreadsheet_id"])
-        st.success(f"Google 시트 연결됨: {sh.title}")
-    except Exception as e:
-        st.error(f"시트 연결 오류: {e}")
+    if st.session_state.sheets_ok:
+        st.success(f"Google 시트 연결됨: {st.session_state.sheet_title}")
+    else:
+        msg = st.session_state.sheets_err or "미연결"
+        st.error(f"시트 연결 오류: {msg}")
+        if st.button("시트 다시 연결", key="btn_reconnect"):
+            try:
+                df0, sheets_ok, sheet_title, err = initial_load()
+                st.session_state.df = df0
+                st.session_state.sheets_ok = sheets_ok
+                st.session_state.sheet_title = sheet_title
+                st.session_state.sheets_err = err
+                st.rerun()
+            except Exception as e:
+                st.session_state.sheets_err = str(e)
 
     st.subheader("1. 엑셀 업로드")
     st.caption("새 거래내역 추가 (기존과 합침)")
@@ -349,10 +348,12 @@ with st.sidebar:
                     subset=["거래일시", "적요", "보낸분/받는분", "출금액", "입금액"], keep="last"
                 )
                 st.session_state.df = combined
-                st.success(f"업로드 완료! +{len(st.session_state.df) - before}건 / 전체 {len(st.session_state.df)}건")
+                added = len(st.session_state.df) - before
+                st.success(f"업로드 완료! 파일 {len(new_df)}건 중 +{added}건 추가 / 전체 {len(st.session_state.df)}건")
             else:
                 st.session_state.df = new_df
                 st.success(f"업로드 완료! 총 {len(st.session_state.df)}건")
+            # 업로드 직후 자동 저장 (1회 쓰기)
             save_data(st.session_state.df)
         except Exception as e:
             st.error(f"파일 읽기 오류: {e}")
@@ -420,7 +421,6 @@ if st.session_state.df.empty:
     st.info("사이드바에서 엑셀을 업로드하세요.")
     st.stop()
 
-# 1. 대시보드
 today = date.today()
 this_month = st.session_state.df[
     (st.session_state.df["거래일시"].dt.year == today.year) &
@@ -431,7 +431,7 @@ c1.metric("이번 달 입금", fmt_won(this_month["입금액"].sum()))
 c2.metric("이번 달 출금", fmt_won(this_month["출금액"].sum()))
 c3.metric("이번 달 순현금흐름", fmt_won(this_month["입금액"].sum() - this_month["출금액"].sum()))
 
-# 2. 통합 상세 조회
+# 통합 상세 조회
 st.markdown("#### 🔍 통합 상세 조회")
 st.info("호수 + 상대방 + 검색어 + 기간 (합집합)")
 
@@ -515,8 +515,8 @@ if not combo_df.empty:
                     (st.session_state.df["입금액"] == row["입금액"])
                 )
                 st.session_state.df = st.session_state.df[~mask]
-            save_data(st.session_state.df)
-            st.success("삭제되었습니다.")
+            # 삭제는 메모리만 반영 → 저장 버튼으로 시트 반영
+            st.success("삭제되었습니다. 위 「수정내용 저장」을 눌러 시트에 반영하세요.")
             st.rerun()
     else:
         st.caption("삭제할 행을 클릭해서 선택하세요.")
@@ -551,9 +551,9 @@ else:
 
 st.divider()
 
-# 3. 거래 내역
+# 거래 내역
 st.subheader("📋 거래 내역")
-st.success("**✏️ 수정 가능:** 카테고리 · 호수 · 송금메모  |  **읽기 전용:** 출금액 · 입금액 · 잔액 (천 단위 표시)")
+st.success("**✏️ 수정 가능:** 카테고리 · 호수 · 송금메모  |  **읽기 전용:** 출금액 · 입금액 · 잔액")
 
 st.markdown("##### 필터")
 df_all = st.session_state.df
@@ -572,17 +572,15 @@ with f3:
 with f4:
     type_filter = st.radio("구분", ["전체", "입금", "출금"], horizontal=True, key="tx_type")
 
-# ★ 복수 검색어
 search_term = st.text_input(
     "검색어 (복수 가능)",
     placeholder="예: 이혜빈 606호 1750000  /  박주하 보증금",
     key="tx_search",
-    help="여러 단어를 공백 또는 / 로 구분하면 OR 검색됩니다. 호수·보낸분/받는분·적요·송금메모·카테고리·금액에서 찾습니다."
+    help="공백 또는 / 로 구분 → OR 검색. 호수·상대방·적요·메모·카테고리·금액"
 )
 st.caption(
-    "🔎 **검색 방법:** 여러 단어를 **공백** 또는 **/** 로 구분 → 하나라도 포함되면 표시 (OR)  \n"
-    "검색 대상: 호수 · 보낸분/받는분 · 적요 · 송금메모 · 카테고리 · 출금액 · 입금액  \n"
-    "예시: `이혜빈 606호` / `1750000` / `박주하 보증금 임대수입`"
+    "🔎 **검색 방법:** 여러 단어를 공백 또는 / 로 구분 (OR)  \n"
+    "대상: 호수 · 보낸분/받는분 · 적요 · 송금메모 · 카테고리 · 출금액 · 입금액"
 )
 
 st.markdown("##### 거래기간")
@@ -603,10 +601,7 @@ if type_filter == "입금":
     tx_filtered = tx_filtered[tx_filtered["입금액"] > 0]
 elif type_filter == "출금":
     tx_filtered = tx_filtered[tx_filtered["출금액"] > 0]
-
-# 복수 검색어 적용
 tx_filtered = multi_keyword_filter(tx_filtered, search_term)
-
 if tx_start is not None:
     tx_filtered = tx_filtered[tx_filtered["거래일시"] >= pd.Timestamp(tx_start)]
 if tx_end is not None:
@@ -626,6 +621,7 @@ with b1:
     ):
         if save_data(st.session_state.df):
             st.success("Google 시트에 저장되었습니다.")
+            st.session_state.sheets_ok = True
         else:
             st.warning("시트 저장 실패. 로컬에만 저장되었을 수 있습니다.")
         st.rerun()
@@ -665,7 +661,7 @@ try:
         raw_df = raw_df.sort_values("거래일시", ascending=False)
 
     if raw_df.empty:
-        st.info("필터 조건에 맞는 거래 내역이 없습니다. 필터를 조정해 보세요.")
+        st.info("필터 조건에 맞는 거래 내역이 없습니다.")
     else:
         display_df = raw_df.copy()
         display_df["출금액"] = display_df["출금액"].apply(fmt_num)
@@ -682,12 +678,12 @@ try:
                 "입금액": st.column_config.TextColumn("입금액", disabled=True),
                 "잔액": st.column_config.TextColumn("잔액", disabled=True),
                 "년도": st.column_config.TextColumn("년도", disabled=True),
-                "송금메모": st.column_config.TextColumn("송금메모", help="클릭 후 수정 가능"),
+                "송금메모": st.column_config.TextColumn("송금메모"),
                 "카테고리": st.column_config.SelectboxColumn(
-                    "카테고리", options=ALL_CATEGORIES + ["미분류"], required=True, help="더블클릭 후 선택"
+                    "카테고리", options=ALL_CATEGORIES + ["미분류"], required=True
                 ),
                 "호수": st.column_config.SelectboxColumn(
-                    "호수", options=["미지정"] + FIXED_UNITS, required=True, help="클릭 후 선택"
+                    "호수", options=["미지정"] + FIXED_UNITS, required=True
                 ),
             },
             use_container_width=True,
@@ -728,9 +724,8 @@ try:
 except Exception as e:
     st.warning(f"거래 테이블 표시 중 오류: {e}")
 
-st.caption("※ 저장=Google시트 / 엑셀다운로드=현재필터 / 수정데이터백업=전체")
+st.caption("※ 저장 시에만 Google 시트 API 호출 / 평소에는 메모리만 사용")
 
-# 4. 연도별 요약 · 최근 6개월
 st.divider()
 st.markdown("#### 연도별 요약")
 try:
