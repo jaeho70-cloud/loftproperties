@@ -188,11 +188,17 @@ def process_uploaded_df(new_df):
     return new_df
 
 def df_to_excel_bytes(df, sheet_name="Sheet1"):
-    """Excel 바이트 생성 (버퍼 닫힘 문제 방지)"""
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name=sheet_name)
     return buf.getvalue()
+
+def get_party_list(df):
+    if df is None or df.empty or "보낸분/받는분" not in df.columns:
+        return []
+    parties = df["보낸분/받는분"].dropna().astype(str).str.strip()
+    parties = parties[(parties != "") & (parties.str.lower() != "nan")]
+    return sorted(parties.unique().tolist())
 
 def create_pdf(df, title="Transaction Report", unit="선택안함", party="선택안함", search=""):
     pdf = FPDF()
@@ -330,11 +336,7 @@ with st.sidebar:
     st.divider()
 
     st.subheader("3. 수동 거래 추가")
-    existing_parties = []
-    if not st.session_state.df.empty:
-        party_df = st.session_state.df[["보낸분/받는분", "호수"]].drop_duplicates()
-        party_df["sort_key"] = party_df["호수"].apply(lambda x: 0 if x == "미지정" else 1)
-        existing_parties = party_df.sort_values("sort_key")["보낸분/받는분"].dropna().unique().tolist()
+    existing_parties = get_party_list(st.session_state.df)
 
     with st.form("add_transaction", clear_on_submit=True):
         add_date = st.date_input("날짜", value=date.today())
@@ -393,7 +395,8 @@ c3.metric("이번 달 순현금흐름", f"{(this_month['입금액'].sum() - this
 st.markdown("#### 🔍 통합 상세 조회")
 st.info("호수 + 상대방 + 검색어 + 기간 (합집합)")
 
-all_parties = sorted(st.session_state.df["보낸분/받는분"].dropna().unique().tolist())
+all_parties = get_party_list(st.session_state.df)
+
 col_a, col_b = st.columns(2)
 with col_a:
     combo_unit = st.selectbox("호수 선택", ["선택안함"] + FIXED_UNITS, key="combo_unit")
@@ -415,7 +418,7 @@ masks = []
 if combo_unit != "선택안함":
     masks.append(base_df["호수"] == combo_unit)
 if combo_party != "선택안함":
-    masks.append(base_df["보낸분/받는분"] == combo_party)
+    masks.append(base_df["보낸분/받는분"].astype(str) == combo_party)
 if start_date is not None:
     masks.append(base_df["거래일시"] >= pd.Timestamp(start_date))
 if end_date is not None:
@@ -533,9 +536,9 @@ st.success("**✏️ 수정** · 카테고리 더블클릭 선택 · 송금메�
 
 st.markdown("##### 필터")
 df_all = st.session_state.df
-units = sorted([u for u in df_all["호수"].dropna().unique() if u != "미지정"])
-units = ["미지정"] + units if "미지정" in df_all["호수"].values else units
-years = sorted(df_all["년도"].dropna().unique().tolist(), reverse=True)
+units = sorted([str(u) for u in df_all["호수"].dropna().unique() if str(u) != "미지정" and str(u).strip() != ""])
+units = ["미지정"] + units if "미지정" in df_all["호수"].astype(str).values else units
+years = sorted([str(y) for y in df_all["년도"].dropna().unique().tolist()], reverse=True)
 
 f1, f2, f3, f4 = st.columns(4)
 with f1:
@@ -557,9 +560,9 @@ with t2:
 
 tx_filtered = st.session_state.df.copy()
 if selected_unit != "전체":
-    tx_filtered = tx_filtered[tx_filtered["호수"] == selected_unit]
+    tx_filtered = tx_filtered[tx_filtered["호수"].astype(str) == selected_unit]
 if selected_year != "전체":
-    tx_filtered = tx_filtered[tx_filtered["년도"] == selected_year]
+    tx_filtered = tx_filtered[tx_filtered["년도"].astype(str) == selected_year]
 if selected_month != "전체":
     tx_filtered = tx_filtered[tx_filtered["거래일시"].dt.month == selected_month]
 if type_filter == "입금":
@@ -646,4 +649,4 @@ with b3:
             key="dl_full_backup"
         )
 
-st.caption("※ 「수정내용 저장」→ Google 시트 저장 / 「엑셀다운로드」= 현재 필터 / 「수정데이터 엑셀백업」= 전체")
+st.caption("※ 「수정내용 저장」→ Google 시트 / 「엑셀다운로드」= 현재 필터 / 「수정데이터 엑셀백업」= 전체")
