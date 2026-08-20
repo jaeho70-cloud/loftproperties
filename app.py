@@ -206,6 +206,14 @@ def fmt_won(n):
     except Exception:
         return "0 원"
 
+def fmt_num(n):
+    try:
+        if pd.isna(n):
+            return ""
+        return f"{float(n):,.0f}"
+    except Exception:
+        return ""
+
 def create_pdf(df, title="Transaction Report", unit="선택안함", party="선택안함", search=""):
     pdf = FPDF()
     pdf.add_page()
@@ -520,7 +528,7 @@ st.divider()
 
 # 3. 거래 내역
 st.subheader("📋 거래 내역")
-st.success("**✏️ 수정** · 카테고리 더블클릭 선택 · 송금메모/호수 클릭 후 수정")
+st.success("**✏️ 수정 가능:** 카테고리 · 호수 · 송금메모  |  **읽기 전용:** 출금액 · 입금액 · 잔액 (천 단위 표시)")
 
 st.markdown("##### 필터")
 df_all = st.session_state.df
@@ -617,40 +625,55 @@ with b3:
 st.markdown("---")
 
 try:
-    display_df = tx_filtered[COLUMNS].copy()
-    if not display_df.empty:
-        display_df = display_df.sort_values("거래일시", ascending=False)
+    raw_df = tx_filtered[COLUMNS].copy()
+    if not raw_df.empty:
+        raw_df = raw_df.sort_values("거래일시", ascending=False)
 
-    if display_df.empty:
+    if raw_df.empty:
         st.info("필터 조건에 맞는 거래 내역이 없습니다. 필터를 조정해 보세요.")
     else:
+        # 금액은 천단위 문자열로 변환 (읽기 전용)
+        display_df = raw_df.copy()
+        display_df["출금액"] = display_df["출금액"].apply(fmt_num)
+        display_df["입금액"] = display_df["입금액"].apply(fmt_num)
+        display_df["잔액"] = display_df["잔액"].apply(fmt_num)
+
         edited_df = st.data_editor(
             display_df,
             column_config={
-                "거래일시": st.column_config.DatetimeColumn("거래일시", format="YYYY-MM-DD"),
-                "호수": st.column_config.SelectboxColumn("호수", options=["미지정"] + FIXED_UNITS, required=True),
-                "출금액": st.column_config.NumberColumn("출금액", format=",.0f"),
-                "입금액": st.column_config.NumberColumn("입금액", format=",.0f"),
-                "잔액": st.column_config.NumberColumn("잔액", format=",.0f"),
-                "송금메모": st.column_config.TextColumn("송금메모"),
+                "거래일시": st.column_config.DatetimeColumn("거래일시", format="YYYY-MM-DD", disabled=True),
+                "적요": st.column_config.TextColumn("적요", disabled=True),
+                "보낸분/받는분": st.column_config.TextColumn("보낸분/받는분", disabled=True),
+                "출금액": st.column_config.TextColumn("출금액", disabled=True),
+                "입금액": st.column_config.TextColumn("입금액", disabled=True),
+                "잔액": st.column_config.TextColumn("잔액", disabled=True),
+                "년도": st.column_config.TextColumn("년도", disabled=True),
+                "송금메모": st.column_config.TextColumn("송금메모", help="클릭 후 수정 가능"),
                 "카테고리": st.column_config.SelectboxColumn(
-                    "카테고리", options=ALL_CATEGORIES + ["미분류"], required=True
+                    "카테고리", options=ALL_CATEGORIES + ["미분류"], required=True, help="더블클릭 후 선택"
+                ),
+                "호수": st.column_config.SelectboxColumn(
+                    "호수", options=["미지정"] + FIXED_UNITS, required=True, help="클릭 후 선택"
                 ),
             },
             use_container_width=True,
             hide_index=True,
             num_rows="fixed",
             key="transaction_editor",
+            disabled=["거래일시", "적요", "보낸분/받는분", "출금액", "입금액", "잔액", "년도"],
         )
+
         try:
             changed = False
-            for _, row in edited_df.iterrows():
+            # 원본 순서와 맞춰 수정 반영 (카테고리/호수/송금메모만)
+            for i, (_, row) in enumerate(edited_df.iterrows()):
+                orig = raw_df.iloc[i]
                 mask = (
-                    (st.session_state.df["거래일시"] == row["거래일시"]) &
-                    (st.session_state.df["적요"] == row["적요"]) &
-                    (st.session_state.df["보낸분/받는분"] == row["보낸분/받는분"]) &
-                    (st.session_state.df["출금액"] == row["출금액"]) &
-                    (st.session_state.df["입금액"] == row["입금액"])
+                    (st.session_state.df["거래일시"] == orig["거래일시"]) &
+                    (st.session_state.df["적요"] == orig["적요"]) &
+                    (st.session_state.df["보낸분/받는분"] == orig["보낸분/받는분"]) &
+                    (st.session_state.df["출금액"] == orig["출금액"]) &
+                    (st.session_state.df["입금액"] == orig["입금액"])
                 )
                 if not mask.any():
                     continue
