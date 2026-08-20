@@ -387,6 +387,7 @@ if st.session_state.df.empty:
     st.info("사이드바에서 엑셀을 업로드하세요.")
     st.stop()
 
+# 1. 대시보드
 today = date.today()
 this_month = st.session_state.df[
     (st.session_state.df["거래일시"].dt.year == today.year) &
@@ -397,7 +398,7 @@ c1.metric("이번 달 입금", fmt_won(this_month["입금액"].sum()))
 c2.metric("이번 달 출금", fmt_won(this_month["출금액"].sum()))
 c3.metric("이번 달 순현금흐름", fmt_won(this_month["입금액"].sum() - this_month["출금액"].sum()))
 
-# 통합 상세 조회
+# 2. 통합 상세 조회
 st.markdown("#### 🔍 통합 상세 조회")
 st.info("호수 + 상대방 + 검색어 + 기간 (합집합)")
 
@@ -515,30 +516,9 @@ elif combo_unit == "선택안함" and combo_party == "선택안함" and not comb
 else:
     st.warning("조건에 맞는 내역이 없습니다.")
 
-st.markdown("#### 연도별 요약")
-yearly = st.session_state.df.groupby("년도").agg(입금합계=("입금액", "sum"), 출금합계=("출금액", "sum")).reset_index()
-yearly["순현금흐름"] = yearly["입금합계"] - yearly["출금합계"]
-st.dataframe(
-    yearly.sort_values("년도", ascending=False).style.format(
-        {"입금합계": "{:,.0f}", "출금합계": "{:,.0f}", "순현금흐름": "{:,.0f}"}
-    ),
-    use_container_width=True, hide_index=True
-)
-
-st.markdown("#### 최근 6개월 월별 순현금흐름")
-tmp = st.session_state.df.copy()
-tmp["년월"] = tmp["거래일시"].dt.to_period("M").astype(str)
-monthly = tmp.groupby("년월").agg(입금=("입금액", "sum"), 출금=("출금액", "sum")).reset_index()
-monthly["순현금흐름"] = monthly["입금"] - monthly["출금"]
-monthly = monthly.sort_values("년월").tail(6)
-if not monthly.empty:
-    st.bar_chart(monthly.set_index("년월")["순현금흐름"])
-
 st.divider()
 
-# --------------------------------------------------
-# 거래 내역
-# --------------------------------------------------
+# 3. 거래 내역
 st.subheader("📋 거래 내역")
 st.success("**✏️ 수정** · 카테고리 더블클릭 선택 · 송금메모/호수 클릭 후 수정")
 
@@ -591,7 +571,7 @@ if tx_end is not None:
 
 st.caption(f"현재 표시 건수: **{len(tx_filtered):,}건**")
 
-# ★ 저장/다운로드 버튼 — 테이블 바로 위 (항상 보임)
+# 저장/다운로드 버튼 — 테이블 위
 st.warning("⚠️ 카테고리·호수·송금메모를 수정한 뒤에는 반드시 저장 버튼을 누르세요.")
 b1, b2, b3 = st.columns(3)
 
@@ -637,7 +617,6 @@ with b3:
 
 st.markdown("---")
 
-# 테이블
 display_df = tx_filtered[COLUMNS].copy()
 if not display_df.empty:
     display_df = display_df.sort_values("거래일시", ascending=False)
@@ -682,3 +661,26 @@ else:
         pass
 
 st.caption("※ 저장=Google시트 / 엑셀다운로드=현재필터 / 수정데이터백업=전체")
+
+# 4. 연도별 요약 · 최근 6개월 (맨 아래)
+st.divider()
+st.markdown("#### 연도별 요약")
+yearly = st.session_state.df.groupby("년도").agg(입금합계=("입금액", "sum"), 출금합계=("출금액", "sum")).reset_index()
+yearly["순현금흐름"] = yearly["입금합계"] - yearly["출금합계"]
+st.dataframe(
+    yearly.sort_values("년도", ascending=False).style.format(
+        {"입금합계": "{:,.0f}", "출금합계": "{:,.0f}", "순현금흐름": "{:,.0f}"}
+    ),
+    use_container_width=True, hide_index=True
+)
+
+st.markdown("#### 최근 6개월 월별 순현금흐름")
+tmp = st.session_state.df.copy()
+tmp["년월"] = tmp["거래일시"].dt.to_period("M").astype(str)
+monthly = tmp.groupby("년월").agg(입금=("입금액", "sum"), 출금=("출금액", "sum")).reset_index()
+monthly["순현금흐름"] = monthly["입금"] - monthly["출금"]
+monthly = monthly.sort_values("년월").tail(6)
+if not monthly.empty:
+    st.bar_chart(monthly.set_index("년월")["순현금흐름"])
+else:
+    st.info("데이터가 부족합니다.")
