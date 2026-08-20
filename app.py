@@ -571,7 +571,6 @@ if tx_end is not None:
 
 st.caption(f"현재 표시 건수: **{len(tx_filtered):,}건**")
 
-# 저장/다운로드 버튼 (테이블 위)
 st.warning("⚠️ 카테고리·호수·송금메모를 수정한 뒤에는 반드시 저장 버튼을 누르세요.")
 b1, b2, b3 = st.columns(3)
 
@@ -617,7 +616,6 @@ with b3:
 
 st.markdown("---")
 
-# 테이블 (오류가 나도 아래 요약은 실행되도록 try/except)
 try:
     display_df = tx_filtered[COLUMNS].copy()
     if not display_df.empty:
@@ -631,9 +629,9 @@ try:
             column_config={
                 "거래일시": st.column_config.DatetimeColumn("거래일시", format="YYYY-MM-DD"),
                 "호수": st.column_config.SelectboxColumn("호수", options=["미지정"] + FIXED_UNITS, required=True),
-                "출금액": st.column_config.NumberColumn("출금액", format="%d"),
-                "입금액": st.column_config.NumberColumn("입금액", format="%d"),
-                "잔액": st.column_config.NumberColumn("잔액", format="%d"),
+                "출금액": st.column_config.NumberColumn("출금액", format=",.0f"),
+                "입금액": st.column_config.NumberColumn("입금액", format=",.0f"),
+                "잔액": st.column_config.NumberColumn("잔액", format=",.0f"),
                 "송금메모": st.column_config.TextColumn("송금메모"),
                 "카테고리": st.column_config.SelectboxColumn(
                     "카테고리", options=ALL_CATEGORIES + ["미분류"], required=True
@@ -676,7 +674,7 @@ except Exception as e:
 
 st.caption("※ 저장=Google시트 / 엑셀다운로드=현재필터 / 수정데이터백업=전체")
 
-# 4. 연도별 요약 · 최근 6개월 (맨 아래 — 항상 실행)
+# 4. 연도별 요약 · 최근 6개월
 st.divider()
 st.markdown("#### 연도별 요약")
 try:
