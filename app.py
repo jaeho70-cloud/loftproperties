@@ -416,7 +416,7 @@ combo_search = st.text_input(
 base_df = st.session_state.df.copy()
 masks = []
 if combo_unit != "선택안함":
-    masks.append(base_df["호수"] == combo_unit)
+    masks.append(base_df["호수"].astype(str) == combo_unit)
 if combo_party != "선택안함":
     masks.append(base_df["보낸분/받는분"].astype(str) == combo_party)
 if start_date is not None:
@@ -530,14 +530,17 @@ if not monthly.empty:
 
 st.divider()
 
+# --------------------------------------------------
 # 거래 내역
+# --------------------------------------------------
 st.subheader("📋 거래 내역")
 st.success("**✏️ 수정** · 카테고리 더블클릭 선택 · 송금메모/호수 클릭 후 수정")
 
 st.markdown("##### 필터")
 df_all = st.session_state.df
 units = sorted([str(u) for u in df_all["호수"].dropna().unique() if str(u) != "미지정" and str(u).strip() != ""])
-units = ["미지정"] + units if "미지정" in df_all["호수"].astype(str).values else units
+if (df_all["호수"].astype(str) == "미지정").any():
+    units = ["미지정"] + units
 years = sorted([str(y) for y in df_all["년도"].dropna().unique().tolist()], reverse=True)
 
 f1, f2, f3, f4 = st.columns(4)
@@ -582,61 +585,81 @@ if tx_end is not None:
 
 st.caption(f"현재 표시 건수: **{len(tx_filtered)}건**")
 
-display_df = tx_filtered[COLUMNS].sort_values("거래일시", ascending=False)
-edited_df = st.data_editor(
-    display_df,
-    column_config={
-        "거래일시": st.column_config.DatetimeColumn("거래일시", format="YYYY-MM-DD"),
-        "호수": st.column_config.SelectboxColumn("호수", options=["미지정"] + FIXED_UNITS, required=True),
-        "출금액": st.column_config.NumberColumn("출금액", format="%d"),
-        "입금액": st.column_config.NumberColumn("입금액", format="%d"),
-        "잔액": st.column_config.NumberColumn("잔액", format="%d"),
-        "송금메모": st.column_config.TextColumn("송금메모"),
-        "카테고리": st.column_config.SelectboxColumn("카테고리", options=ALL_CATEGORIES + ["미분류"], required=True),
-    },
-    use_container_width=True, hide_index=True, num_rows="fixed", key="transaction_editor"
-)
+display_df = tx_filtered[COLUMNS].copy()
+if not display_df.empty:
+    display_df = display_df.sort_values("거래일시", ascending=False)
 
-if not edited_df.equals(display_df):
-    for _, row in edited_df.iterrows():
-        mask = (
-            (st.session_state.df["거래일시"] == row["거래일시"]) &
-            (st.session_state.df["적요"] == row["적요"]) &
-            (st.session_state.df["보낸분/받는분"] == row["보낸분/받는분"]) &
-            (st.session_state.df["출금액"] == row["출금액"]) &
-            (st.session_state.df["입금액"] == row["입금액"])
-        )
-        st.session_state.df.loc[mask, "카테고리"] = row["카테고리"]
-        st.session_state.df.loc[mask, "호수"] = row["호수"]
-        st.session_state.df.loc[mask, "송금메모"] = row["송금메모"]
-    st.success("화면 반영됨 → 아래 「수정내용 저장」을 누르세요.")
-    st.rerun()
+if display_df.empty:
+    st.info("필터 조건에 맞는 거래 내역이 없습니다. 필터를 조정해 보세요.")
+else:
+    edited_df = st.data_editor(
+        display_df,
+        column_config={
+            "거래일시": st.column_config.DatetimeColumn("거래일시", format="YYYY-MM-DD"),
+            "호수": st.column_config.SelectboxColumn("호수", options=["미지정"] + FIXED_UNITS, required=True),
+            "출금액": st.column_config.NumberColumn("출금액", format="%d"),
+            "입금액": st.column_config.NumberColumn("입금액", format="%d"),
+            "잔액": st.column_config.NumberColumn("잔액", format="%d"),
+            "송금메모": st.column_config.TextColumn("송금메모"),
+            "카테고리": st.column_config.SelectboxColumn(
+                "카테고리", options=ALL_CATEGORIES + ["미분류"], required=True
+            ),
+        },
+        use_container_width=True,
+        hide_index=True,
+        num_rows="fixed",
+        key="transaction_editor",
+    )
+    try:
+        if not edited_df.equals(display_df):
+            for _, row in edited_df.iterrows():
+                mask = (
+                    (st.session_state.df["거래일시"] == row["거래일시"]) &
+                    (st.session_state.df["적요"] == row["적요"]) &
+                    (st.session_state.df["보낸분/받는분"] == row["보낸분/받는분"]) &
+                    (st.session_state.df["출금액"] == row["출금액"]) &
+                    (st.session_state.df["입금액"] == row["입금액"])
+                )
+                st.session_state.df.loc[mask, "카테고리"] = row["카테고리"]
+                st.session_state.df.loc[mask, "호수"] = row["호수"]
+                st.session_state.df.loc[mask, "송금메모"] = row["송금메모"]
+            st.success("화면 반영됨 → 아래 「수정내용 저장」을 누르세요.")
+            st.rerun()
+    except Exception:
+        pass
 
+# ★ 하단 버튼 — 항상 표시
 st.markdown("---")
 st.warning("⚠️ 카테고리·호수·송금메모를 수정한 뒤에는 반드시 아래 버튼을 누르세요.")
 
 b1, b2, b3 = st.columns(3)
 
 with b1:
-    if st.button("💾 수정내용 저장 (Google 시트)", type="primary", use_container_width=True, key="btn_save_sheets"):
+    if st.button(
+        "💾 수정내용 저장 (Google 시트)",
+        type="primary",
+        use_container_width=True,
+        key="btn_save_sheets",
+    ):
         if save_data(st.session_state.df):
-            st.success("Google 시트에 저장되었습니다. 다음에 접속해도 유지됩니다.")
+            st.success("Google 시트에 저장되었습니다.")
         else:
             st.warning("시트 저장 실패. 로컬에만 저장되었을 수 있습니다.")
         st.rerun()
 
 with b2:
-    if not tx_filtered.empty:
+    export_df = tx_filtered[COLUMNS].copy() if not tx_filtered.empty else st.session_state.df[COLUMNS].copy()
+    if not export_df.empty:
         st.download_button(
             label="📊 엑셀다운로드(현재 필터된 거래내역)",
-            data=df_to_excel_bytes(tx_filtered[COLUMNS].sort_values("거래일시", ascending=False), "거래내역"),
+            data=df_to_excel_bytes(export_df.sort_values("거래일시", ascending=False), "거래내역"),
             file_name=f"거래내역_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
-            key="dl_tx_filtered"
+            key="dl_tx_filtered",
         )
     else:
-        st.caption("다운로드할 필터 데이터가 없습니다.")
+        st.caption("다운로드할 데이터가 없습니다.")
 
 with b3:
     if not st.session_state.df.empty:
@@ -646,7 +669,9 @@ with b3:
             file_name=f"수정데이터_백업_{datetime.now().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
-            key="dl_full_backup"
+            key="dl_full_backup",
         )
+    else:
+        st.caption("백업할 데이터가 없습니다.")
 
-st.caption("※ 「수정내용 저장」→ Google 시트 / 「엑셀다운로드」= 현재 필터 / 「수정데이터 엑셀백업」= 전체")
+st.caption("※ 저장=Google시트 / 엑셀다운로드=현재필터 / 수정데이터백업=전체")
