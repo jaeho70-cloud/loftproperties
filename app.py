@@ -571,7 +571,7 @@ if tx_end is not None:
 
 st.caption(f"현재 표시 건수: **{len(tx_filtered):,}건**")
 
-# 저장/다운로드 버튼 — 테이블 위
+# 저장/다운로드 버튼 (테이블 위)
 st.warning("⚠️ 카테고리·호수·송금메모를 수정한 뒤에는 반드시 저장 버튼을 누르세요.")
 b1, b2, b3 = st.columns(3)
 
@@ -617,33 +617,35 @@ with b3:
 
 st.markdown("---")
 
-display_df = tx_filtered[COLUMNS].copy()
-if not display_df.empty:
-    display_df = display_df.sort_values("거래일시", ascending=False)
+# 테이블 (오류가 나도 아래 요약은 실행되도록 try/except)
+try:
+    display_df = tx_filtered[COLUMNS].copy()
+    if not display_df.empty:
+        display_df = display_df.sort_values("거래일시", ascending=False)
 
-if display_df.empty:
-    st.info("필터 조건에 맞는 거래 내역이 없습니다. 필터를 조정해 보세요.")
-else:
-    edited_df = st.data_editor(
-        display_df,
-        column_config={
-            "거래일시": st.column_config.DatetimeColumn("거래일시", format="YYYY-MM-DD"),
-            "호수": st.column_config.SelectboxColumn("호수", options=["미지정"] + FIXED_UNITS, required=True),
-            "출금액": st.column_config.NumberColumn("출금액", format="%,d"),
-            "입금액": st.column_config.NumberColumn("입금액", format="%,d"),
-            "잔액": st.column_config.NumberColumn("잔액", format="%,d"),
-            "송금메모": st.column_config.TextColumn("송금메모"),
-            "카테고리": st.column_config.SelectboxColumn(
-                "카테고리", options=ALL_CATEGORIES + ["미분류"], required=True
-            ),
-        },
-        use_container_width=True,
-        hide_index=True,
-        num_rows="fixed",
-        key="transaction_editor",
-    )
-    try:
-        if not edited_df.equals(display_df):
+    if display_df.empty:
+        st.info("필터 조건에 맞는 거래 내역이 없습니다. 필터를 조정해 보세요.")
+    else:
+        edited_df = st.data_editor(
+            display_df,
+            column_config={
+                "거래일시": st.column_config.DatetimeColumn("거래일시", format="YYYY-MM-DD"),
+                "호수": st.column_config.SelectboxColumn("호수", options=["미지정"] + FIXED_UNITS, required=True),
+                "출금액": st.column_config.NumberColumn("출금액", format="%d"),
+                "입금액": st.column_config.NumberColumn("입금액", format="%d"),
+                "잔액": st.column_config.NumberColumn("잔액", format="%d"),
+                "송금메모": st.column_config.TextColumn("송금메모"),
+                "카테고리": st.column_config.SelectboxColumn(
+                    "카테고리", options=ALL_CATEGORIES + ["미분류"], required=True
+                ),
+            },
+            use_container_width=True,
+            hide_index=True,
+            num_rows="fixed",
+            key="transaction_editor",
+        )
+        try:
+            changed = False
             for _, row in edited_df.iterrows():
                 mask = (
                     (st.session_state.df["거래일시"] == row["거래일시"]) &
@@ -652,35 +654,57 @@ else:
                     (st.session_state.df["출금액"] == row["출금액"]) &
                     (st.session_state.df["입금액"] == row["입금액"])
                 )
-                st.session_state.df.loc[mask, "카테고리"] = row["카테고리"]
-                st.session_state.df.loc[mask, "호수"] = row["호수"]
-                st.session_state.df.loc[mask, "송금메모"] = row["송금메모"]
-            st.success("화면 반영됨 → 위 「수정내용 저장」을 누르세요.")
-            st.rerun()
-    except Exception:
-        pass
+                if not mask.any():
+                    continue
+                idx = st.session_state.df.index[mask][0]
+                if (
+                    str(st.session_state.df.at[idx, "카테고리"]) != str(row["카테고리"])
+                    or str(st.session_state.df.at[idx, "호수"]) != str(row["호수"])
+                    or str(st.session_state.df.at[idx, "송금메모"]) != str(row["송금메모"])
+                ):
+                    st.session_state.df.at[idx, "카테고리"] = row["카테고리"]
+                    st.session_state.df.at[idx, "호수"] = row["호수"]
+                    st.session_state.df.at[idx, "송금메모"] = row["송금메모"]
+                    changed = True
+            if changed:
+                st.success("화면 반영됨 → 위 「수정내용 저장」을 누르세요.")
+                st.rerun()
+        except Exception:
+            pass
+except Exception as e:
+    st.warning(f"거래 테이블 표시 중 오류: {e}")
 
 st.caption("※ 저장=Google시트 / 엑셀다운로드=현재필터 / 수정데이터백업=전체")
 
-# 4. 연도별 요약 · 최근 6개월 (맨 아래)
+# 4. 연도별 요약 · 최근 6개월 (맨 아래 — 항상 실행)
 st.divider()
 st.markdown("#### 연도별 요약")
-yearly = st.session_state.df.groupby("년도").agg(입금합계=("입금액", "sum"), 출금합계=("출금액", "sum")).reset_index()
-yearly["순현금흐름"] = yearly["입금합계"] - yearly["출금합계"]
-st.dataframe(
-    yearly.sort_values("년도", ascending=False).style.format(
-        {"입금합계": "{:,.0f}", "출금합계": "{:,.0f}", "순현금흐름": "{:,.0f}"}
-    ),
-    use_container_width=True, hide_index=True
-)
+try:
+    yearly = st.session_state.df.groupby("년도").agg(
+        입금합계=("입금액", "sum"),
+        출금합계=("출금액", "sum")
+    ).reset_index()
+    yearly["순현금흐름"] = yearly["입금합계"] - yearly["출금합계"]
+    st.dataframe(
+        yearly.sort_values("년도", ascending=False).style.format(
+            {"입금합계": "{:,.0f}", "출금합계": "{:,.0f}", "순현금흐름": "{:,.0f}"}
+        ),
+        use_container_width=True,
+        hide_index=True
+    )
+except Exception as e:
+    st.warning(f"연도별 요약 오류: {e}")
 
 st.markdown("#### 최근 6개월 월별 순현금흐름")
-tmp = st.session_state.df.copy()
-tmp["년월"] = tmp["거래일시"].dt.to_period("M").astype(str)
-monthly = tmp.groupby("년월").agg(입금=("입금액", "sum"), 출금=("출금액", "sum")).reset_index()
-monthly["순현금흐름"] = monthly["입금"] - monthly["출금"]
-monthly = monthly.sort_values("년월").tail(6)
-if not monthly.empty:
-    st.bar_chart(monthly.set_index("년월")["순현금흐름"])
-else:
-    st.info("데이터가 부족합니다.")
+try:
+    tmp = st.session_state.df.copy()
+    tmp["년월"] = tmp["거래일시"].dt.to_period("M").astype(str)
+    monthly = tmp.groupby("년월").agg(입금=("입금액", "sum"), 출금=("출금액", "sum")).reset_index()
+    monthly["순현금흐름"] = monthly["입금"] - monthly["출금"]
+    monthly = monthly.sort_values("년월").tail(6)
+    if not monthly.empty:
+        st.bar_chart(monthly.set_index("년월")["순현금흐름"])
+    else:
+        st.info("데이터가 부족합니다.")
+except Exception as e:
+    st.warning(f"월별 차트 오류: {e}")
