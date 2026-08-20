@@ -214,6 +214,31 @@ def fmt_num(n):
     except Exception:
         return ""
 
+def multi_keyword_filter(df, search_text):
+    """복수 검색어 OR 필터. 호수/상대방/적요/메모/카테고리/금액 대상"""
+    if df is None or df.empty or not search_text or not str(search_text).strip():
+        return df
+    keywords = [k for k in re.split(r'[\s/]+', str(search_text).strip()) if k]
+    if not keywords:
+        return df
+    masks = []
+    for kw in keywords:
+        kw_clean = kw.replace(",", "").replace("원", "").strip()
+        m = (
+            df["호수"].astype(str).str.contains(kw, case=False, na=False) |
+            df["보낸분/받는분"].astype(str).str.contains(kw, case=False, na=False) |
+            df["적요"].astype(str).str.contains(kw, case=False, na=False) |
+            df["송금메모"].astype(str).str.contains(kw, case=False, na=False) |
+            df["카테고리"].astype(str).str.contains(kw, case=False, na=False) |
+            df["출금액"].astype(str).str.contains(kw_clean, case=False, na=False) |
+            df["입금액"].astype(str).str.contains(kw_clean, case=False, na=False)
+        )
+        masks.append(m)
+    final = masks[0]
+    for m in masks[1:]:
+        final = final | m
+    return df[final]
+
 def create_pdf(df, title="Transaction Report", unit="선택안함", party="선택안함", search=""):
     pdf = FPDF()
     pdf.add_page()
@@ -424,7 +449,7 @@ with col_d2:
     end_date = st.date_input("종료일", value=None, key="combo_end")
 combo_search = st.text_input(
     "추가 검색어",
-    placeholder="예: 계약금 또는 보증금 또는 이혜빈/606호 또는 1,750,000원",
+    placeholder="예: 계약금 보증금 이혜빈 606호 1750000",
     key="combo_search"
 )
 
@@ -546,7 +571,19 @@ with f3:
     selected_month = st.selectbox("월", ["전체"] + list(range(1, 13)), key="tx_month")
 with f4:
     type_filter = st.radio("구분", ["전체", "입금", "출금"], horizontal=True, key="tx_type")
-search_term = st.text_input("검색어", key="tx_search")
+
+# ★ 복수 검색어
+search_term = st.text_input(
+    "검색어 (복수 가능)",
+    placeholder="예: 이혜빈 606호 1750000  /  박주하 보증금",
+    key="tx_search",
+    help="여러 단어를 공백 또는 / 로 구분하면 OR 검색됩니다. 호수·보낸분/받는분·적요·송금메모·카테고리·금액에서 찾습니다."
+)
+st.caption(
+    "🔎 **검색 방법:** 여러 단어를 **공백** 또는 **/** 로 구분 → 하나라도 포함되면 표시 (OR)  \n"
+    "검색 대상: 호수 · 보낸분/받는분 · 적요 · 송금메모 · 카테고리 · 출금액 · 입금액  \n"
+    "예시: `이혜빈 606호` / `1750000` / `박주하 보증금 임대수입`"
+)
 
 st.markdown("##### 거래기간")
 t1, t2 = st.columns(2)
@@ -566,12 +603,10 @@ if type_filter == "입금":
     tx_filtered = tx_filtered[tx_filtered["입금액"] > 0]
 elif type_filter == "출금":
     tx_filtered = tx_filtered[tx_filtered["출금액"] > 0]
-if search_term:
-    tx_filtered = tx_filtered[
-        tx_filtered["보낸분/받는분"].astype(str).str.contains(search_term, case=False, na=False) |
-        tx_filtered["적요"].astype(str).str.contains(search_term, case=False, na=False) |
-        tx_filtered["송금메모"].astype(str).str.contains(search_term, case=False, na=False)
-    ]
+
+# 복수 검색어 적용
+tx_filtered = multi_keyword_filter(tx_filtered, search_term)
+
 if tx_start is not None:
     tx_filtered = tx_filtered[tx_filtered["거래일시"] >= pd.Timestamp(tx_start)]
 if tx_end is not None:
@@ -632,7 +667,6 @@ try:
     if raw_df.empty:
         st.info("필터 조건에 맞는 거래 내역이 없습니다. 필터를 조정해 보세요.")
     else:
-        # 금액은 천단위 문자열로 변환 (읽기 전용)
         display_df = raw_df.copy()
         display_df["출금액"] = display_df["출금액"].apply(fmt_num)
         display_df["입금액"] = display_df["입금액"].apply(fmt_num)
@@ -665,7 +699,6 @@ try:
 
         try:
             changed = False
-            # 원본 순서와 맞춰 수정 반영 (카테고리/호수/송금메모만)
             for i, (_, row) in enumerate(edited_df.iterrows()):
                 orig = raw_df.iloc[i]
                 mask = (
