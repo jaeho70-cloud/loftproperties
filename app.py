@@ -200,6 +200,12 @@ def get_party_list(df):
     parties = parties[(parties != "") & (parties.str.lower() != "nan")]
     return sorted(parties.unique().tolist())
 
+def fmt_won(n):
+    try:
+        return f"{float(n):,.0f} 원"
+    except Exception:
+        return "0 원"
+
 def create_pdf(df, title="Transaction Report", unit="선택안함", party="선택안함", search=""):
     pdf = FPDF()
     pdf.add_page()
@@ -344,7 +350,7 @@ with st.sidebar:
         add_party = st.text_input("상대방 직접 입력") if party_option == "직접 입력" else party_option
         add_unit = st.selectbox("호수", ["선택안함"] + FIXED_UNITS)
         add_type = st.radio("구분", ["입금", "출금"], horizontal=True)
-        add_amount = st.number_input("금액", min_value=0, step=1000)
+        add_amount = st.number_input("금액", min_value=0, step=1000, format="%d")
         add_desc = st.text_input("적요")
         add_memo = st.text_input("송금메모")
         add_category = st.selectbox("카테고리", ALL_CATEGORIES)
@@ -387,9 +393,9 @@ this_month = st.session_state.df[
     (st.session_state.df["거래일시"].dt.month == today.month)
 ]
 c1, c2, c3 = st.columns(3)
-c1.metric("이번 달 입금", f"{this_month['입금액'].sum():,.0f} 원")
-c2.metric("이번 달 출금", f"{this_month['출금액'].sum():,.0f} 원")
-c3.metric("이번 달 순현금흐름", f"{(this_month['입금액'].sum() - this_month['출금액'].sum()):,.0f} 원")
+c1.metric("이번 달 입금", fmt_won(this_month["입금액"].sum()))
+c2.metric("이번 달 출금", fmt_won(this_month["출금액"].sum()))
+c3.metric("이번 달 순현금흐름", fmt_won(this_month["입금액"].sum() - this_month["출금액"].sum()))
 
 # 통합 상세 조회
 st.markdown("#### 🔍 통합 상세 조회")
@@ -446,10 +452,10 @@ else:
 if not combo_df.empty:
     ci, ce = combo_df["입금액"].sum(), combo_df["출금액"].sum()
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("조회 건수", f"{len(combo_df)}건")
-    m2.metric("입금 합계", f"{ci:,.0f} 원")
-    m3.metric("출금 합계", f"{ce:,.0f} 원")
-    m4.metric("순현금흐름", f"{ci - ce:,.0f} 원")
+    m1.metric("조회 건수", f"{len(combo_df):,}건")
+    m2.metric("입금 합계", fmt_won(ci))
+    m3.metric("출금 합계", fmt_won(ce))
+    m4.metric("순현금흐름", fmt_won(ci - ce))
 
     combo_df_display = combo_df[
         ["거래일시", "호수", "보낸분/받는분", "적요", "출금액", "입금액", "송금메모", "카테고리"]
@@ -583,7 +589,7 @@ if tx_start is not None:
 if tx_end is not None:
     tx_filtered = tx_filtered[tx_filtered["거래일시"] <= pd.Timestamp(tx_end) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)]
 
-st.caption(f"현재 표시 건수: **{len(tx_filtered)}건**")
+st.caption(f"현재 표시 건수: **{len(tx_filtered):,}건**")
 
 display_df = tx_filtered[COLUMNS].copy()
 if not display_df.empty:
@@ -597,9 +603,9 @@ else:
         column_config={
             "거래일시": st.column_config.DatetimeColumn("거래일시", format="YYYY-MM-DD"),
             "호수": st.column_config.SelectboxColumn("호수", options=["미지정"] + FIXED_UNITS, required=True),
-            "출금액": st.column_config.NumberColumn("출금액", format="%d"),
-            "입금액": st.column_config.NumberColumn("입금액", format="%d"),
-            "잔액": st.column_config.NumberColumn("잔액", format="%d"),
+            "출금액": st.column_config.NumberColumn("출금액", format="%,d"),
+            "입금액": st.column_config.NumberColumn("입금액", format="%,d"),
+            "잔액": st.column_config.NumberColumn("잔액", format="%,d"),
             "송금메모": st.column_config.TextColumn("송금메모"),
             "카테고리": st.column_config.SelectboxColumn(
                 "카테고리", options=ALL_CATEGORIES + ["미분류"], required=True
@@ -628,7 +634,7 @@ else:
     except Exception:
         pass
 
-# ★ 하단 버튼 — 항상 표시
+# 하단 버튼 — 항상 표시
 st.markdown("---")
 st.warning("⚠️ 카테고리·호수·송금메모를 수정한 뒤에는 반드시 아래 버튼을 누르세요.")
 
