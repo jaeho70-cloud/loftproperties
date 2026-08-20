@@ -32,7 +32,7 @@ FIXED_UNITS = [
 COLUMNS = ["거래일시", "적요", "보낸분/받는분", "출금액", "입금액", "잔액", "송금메모", "년도", "카테고리", "호수"]
 
 # --------------------------------------------------
-# Google 시트 연결
+# Google 시트
 # --------------------------------------------------
 def get_gspread_client():
     try:
@@ -45,7 +45,7 @@ def get_gspread_client():
         info = dict(st.secrets["gcp_service_account"])
         creds = Credentials.from_service_account_info(info, scopes=scopes)
         return gspread.authorize(creds)
-    except Exception as e:
+    except Exception:
         return None
 
 def get_worksheet():
@@ -58,7 +58,7 @@ def get_worksheet():
         try:
             ws = sh.worksheet(SHEET_NAME)
         except Exception:
-            ws = sh.add_worksheet(title=SHEET_NAME, rows=2000, cols=20)
+            ws = sh.add_worksheet(title=SHEET_NAME, rows=3000, cols=20)
             ws.append_row(COLUMNS)
         return ws
     except Exception as e:
@@ -108,9 +108,6 @@ def save_to_sheets(df):
         st.warning(f"시트 저장 실패: {e}")
         return False
 
-# --------------------------------------------------
-# 로컬 pickle (보조)
-# --------------------------------------------------
 def save_data_local(df):
     try:
         os.makedirs(DATA_DIR, exist_ok=True)
@@ -124,25 +121,23 @@ def load_data_local():
         try:
             with open(DATA_FILE, "rb") as f:
                 return pickle.load(f)
-        except:
+        except Exception:
             pass
     return pd.DataFrame(columns=COLUMNS)
 
 def save_data(df):
-    """Google 시트 우선 저장 + 로컬 보조 저장"""
     ok = save_to_sheets(df)
     save_data_local(df)
     return ok
 
 def load_data():
-    """Google 시트 우선 로드, 실패 시 로컬"""
     df = load_from_sheets()
     if df is not None:
         return df
     return load_data_local()
 
 # --------------------------------------------------
-# 공통 함수
+# 공통
 # --------------------------------------------------
 def extract_unit(memo):
     if pd.isna(memo) or str(memo).strip() == "":
@@ -192,6 +187,13 @@ def process_uploaded_df(new_df):
 
     return new_df
 
+def df_to_excel_bytes(df, sheet_name="Sheet1"):
+    """Excel 바이트 생성 (버퍼 닫힘 문제 방지)"""
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name)
+    return buf.getvalue()
+
 def create_pdf(df, title="Transaction Report", unit="선택안함", party="선택안함", search=""):
     pdf = FPDF()
     pdf.add_page()
@@ -204,7 +206,7 @@ def create_pdf(df, title="Transaction Report", unit="선택안함", party="선�
         pdf.add_font("Malgun", "B", r"C:\Windows\Fonts\malgunbd.ttf", uni=True)
         font_name = "Malgun"
         use_korean = True
-    except:
+    except Exception:
         pass
 
     def safe_text(text):
@@ -231,10 +233,9 @@ def create_pdf(df, title="Transaction Report", unit="선택안함", party="선�
 
     income = df["입금액"].sum()
     expense = df["출금액"].sum()
-    net = income - expense
     pdf.cell(0, 7, f"Income: {income:,.0f} KRW", ln=True)
     pdf.cell(0, 7, f"Expense: {expense:,.0f} KRW", ln=True)
-    pdf.cell(0, 7, f"Net: {net:,.0f} KRW", ln=True)
+    pdf.cell(0, 7, f"Net: {income - expense:,.0f} KRW", ln=True)
     pdf.ln(5)
 
     pdf.set_font(font_name, "B" if use_korean else "", 8)
@@ -260,7 +261,7 @@ def create_pdf(df, title="Transaction Report", unit="선택안함", party="선�
     return bytes(output) if isinstance(output, (bytes, bytearray)) else output.encode("latin-1")
 
 # --------------------------------------------------
-# 세션 초기화
+# 세션
 # --------------------------------------------------
 if "df" not in st.session_state:
     st.session_state.df = load_data()
@@ -273,11 +274,20 @@ with st.sidebar:
     st.caption("임대사업 입출금 관리")
     st.info(f"현재 데이터: **{len(st.session_state.df)}건**")
 
-    # 시트 연결 상태
-    if get_gspread_client() is not None:
-        st.success("Google 시트 연결됨")
-    else:
-        st.warning("Google 시트 미연결 (로컬 저장만 사용)")
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        info = dict(st.secrets["gcp_service_account"])
+        creds = Credentials.from_service_account_info(info, scopes=scopes)
+        client = gspread.authorize(creds)
+        sh = client.open_by_key(st.secrets["sheets"]["spreadsheet_id"])
+        st.success(f"Google 시트 연결됨: {sh.title}")
+    except Exception as e:
+        st.error(f"시트 연결 오류: {e}")
 
     st.subheader("1. 엑셀 업로드")
     st.caption("새 거래내역 추가 (기존과 합침)")
@@ -394,7 +404,11 @@ with col_d1:
     start_date = st.date_input("시작일", value=None, key="combo_start")
 with col_d2:
     end_date = st.date_input("종료일", value=None, key="combo_end")
-combo_search = st.text_input("추가 검색어", placeholder="예: 계약금 또는 보증금 또는 이혜빈/606호 또는 1,750,000원", key="combo_search")
+combo_search = st.text_input(
+    "추가 검색어",
+    placeholder="예: 계약금 또는 보증금 또는 이혜빈/606호 또는 1,750,000원",
+    key="combo_search"
+)
 
 base_df = st.session_state.df.copy()
 masks = []
@@ -434,15 +448,20 @@ if not combo_df.empty:
     m3.metric("출금 합계", f"{ce:,.0f} 원")
     m4.metric("순현금흐름", f"{ci - ce:,.0f} 원")
 
-    combo_df_display = combo_df[["거래일시", "호수", "보낸분/받는분", "적요", "출금액", "입금액", "송금메모", "카테고리"]].sort_values("거래일시", ascending=False).reset_index(drop=True)
+    combo_df_display = combo_df[
+        ["거래일시", "호수", "보낸분/받는분", "적요", "출금액", "입금액", "송금메모", "카테고리"]
+    ].sort_values("거래일시", ascending=False).reset_index(drop=True)
+
     event = st.dataframe(
         combo_df_display.style.format({"출금액": "{:,.0f}", "입금액": "{:,.0f}"}),
-        use_container_width=True, hide_index=True, on_select="rerun", selection_mode="multi-row", key="combo_select"
+        use_container_width=True, hide_index=True,
+        on_select="rerun", selection_mode="multi-row", key="combo_select"
     )
     selected_rows = event.selection.rows if event and event.selection and event.selection.rows else []
+
     if selected_rows:
         st.write(f"**{len(selected_rows)}건** 선택됨")
-        if st.button("🗑️ 선택한 내역 삭제", type="primary"):
+        if st.button("🗑️ 선택한 내역 삭제", type="primary", key="btn_delete_combo"):
             to_delete = combo_df_display.iloc[selected_rows]
             for _, row in to_delete.iterrows():
                 mask = (
@@ -462,18 +481,24 @@ if not combo_df.empty:
     d1, d2 = st.columns(2)
     with d1:
         try:
-            st.download_button("📄 PDF로 다운로드", create_pdf(combo_df, unit=combo_unit, party=combo_party, search=combo_search),
-                               file_name=f"입출금내역_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf", mime="application/pdf")
+            st.download_button(
+                "📄 PDF로 다운로드",
+                data=create_pdf(combo_df, unit=combo_unit, party=combo_party, search=combo_search),
+                file_name=f"입출금내역_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                mime="application/pdf",
+                key="dl_combo_pdf"
+            )
         except Exception as e:
             st.warning(f"PDF 오류: {e}")
     with d2:
         try:
-            buf = io.BytesIO()
-            with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-                combo_df.sort_values("거래일시", ascending=False).to_excel(writer, index=False, sheet_name="조회결과")
-            buf.seek(0)
-            st.download_button("📊 엑셀로 다운로드", buf, file_name=f"입출금내역_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.download_button(
+                "📊 엑셀로 다운로드",
+                data=df_to_excel_bytes(combo_df.sort_values("거래일시", ascending=False), "조회결과"),
+                file_name=f"입출금내역_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_combo_excel"
+            )
         except Exception as e:
             st.warning(f"엑셀 오류: {e}")
 elif combo_unit == "선택안함" and combo_party == "선택안함" and not combo_search and start_date is None and end_date is None:
@@ -484,7 +509,12 @@ else:
 st.markdown("#### 연도별 요약")
 yearly = st.session_state.df.groupby("년도").agg(입금합계=("입금액", "sum"), 출금합계=("출금액", "sum")).reset_index()
 yearly["순현금흐름"] = yearly["입금합계"] - yearly["출금합계"]
-st.dataframe(yearly.sort_values("년도", ascending=False).style.format({"입금합계": "{:,.0f}", "출금합계": "{:,.0f}", "순현금흐름": "{:,.0f}"}), use_container_width=True, hide_index=True)
+st.dataframe(
+    yearly.sort_values("년도", ascending=False).style.format(
+        {"입금합계": "{:,.0f}", "출금합계": "{:,.0f}", "순현금흐름": "{:,.0f}"}
+    ),
+    use_container_width=True, hide_index=True
+)
 
 st.markdown("#### 최근 6개월 월별 순현금흐름")
 tmp = st.session_state.df.copy()
@@ -583,38 +613,37 @@ st.markdown("---")
 st.warning("⚠️ 카테고리·호수·송금메모를 수정한 뒤에는 반드시 아래 버튼을 누르세요.")
 
 b1, b2, b3 = st.columns(3)
+
 with b1:
-    if st.button("💾 수정내용 저장 (Google 시트)", type="primary", use_container_width=True):
+    if st.button("💾 수정내용 저장 (Google 시트)", type="primary", use_container_width=True, key="btn_save_sheets"):
         if save_data(st.session_state.df):
             st.success("Google 시트에 저장되었습니다. 다음에 접속해도 유지됩니다.")
         else:
             st.warning("시트 저장 실패. 로컬에만 저장되었을 수 있습니다.")
         st.rerun()
+
 with b2:
     if not tx_filtered.empty:
-        buf = io.BytesIO()
-        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-            tx_filtered[COLUMNS].sort_values("거래일시", ascending=False).to_excel(writer, index=False, sheet_name="거래내역")
-        buf.seek(0)
         st.download_button(
-            "📊 엑셀다운로드(현재 필터된 거래내역)",
-            buf,
+            label="📊 엑셀다운로드(현재 필터된 거래내역)",
+            data=df_to_excel_bytes(tx_filtered[COLUMNS].sort_values("거래일시", ascending=False), "거래내역"),
             file_name=f"거래내역_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
+            use_container_width=True,
+            key="dl_tx_filtered"
         )
+    else:
+        st.caption("다운로드할 필터 데이터가 없습니다.")
+
 with b3:
     if not st.session_state.df.empty:
-        buf = io.BytesIO()
-        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-            st.session_state.df.to_excel(writer, index=False, sheet_name="전체데이터")
-        buf.seek(0)
         st.download_button(
-            "📁 수정데이터 엑셀백업(전체데이터)",
-            buf,
+            label="📁 수정데이터 엑셀백업(전체데이터)",
+            data=df_to_excel_bytes(st.session_state.df, "전체데이터"),
             file_name=f"수정데이터_백업_{datetime.now().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
+            use_container_width=True,
+            key="dl_full_backup"
         )
 
-st.caption("※ 「수정내용 저장」→ Google 시트에 저장되어 다음날에도 유지됩니다.")
+st.caption("※ 「수정내용 저장」→ Google 시트 저장 / 「엑셀다운로드」= 현재 필터 / 「수정데이터 엑셀백업」= 전체")
